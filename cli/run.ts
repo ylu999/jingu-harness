@@ -32,11 +32,14 @@ async function main(): Promise<void> {
   console.log(`Workspace: ${workspaceDir}`);
 
   try {
-    await runTask(task, {
+    const run = await runTask(task, {
       workspaceDir,
       agentWorkspaceDir: workspaceDir,
       evidenceDir: path.join(process.cwd(), ".jingu"),
     });
+    console.log(`\nRun ID: ${run.id}`);
+    console.log(`Final state: ${run.state}`);
+    console.log(`History: ${run.history.length} steps`);
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("claude not found in PATH")) {
       console.error(`ERROR: ${err.message}`);

@@ -9,19 +9,51 @@ import type { TestSummary } from "../invariant/regression.js";
 import { mapFailureToStrategy } from "../strategy/map.js";
 import type { Strategy } from "../strategy/types.js";
 import { writeEvidence } from "../evidence/write.js";
+import { persistRun } from "../evidence/persist.js";
+import type { Run, Step } from "./state.js";
+import type { Failure } from "../failure/types.js";
+import type { ExecutionResult } from "../types.js";
+
+function recordStep(
+  run: Run,
+  result: ExecutionResult,
+  failure: Failure | undefined,
+  strategy: Strategy | undefined,
+  decision: Step["decision"],
+): void {
+  run.history.push({
+    iteration: run.iteration,
+    result,
+    failure,
+    strategy,
+    decision,
+    timestamp: Date.now(),
+  });
+}
 
 export async function runTask(
   task: TaskSpec,
   opts: RunTaskOptions,
-): Promise<void> {
+): Promise<Run> {
   const maxRetries = opts.maxRetries ?? task.maxRetries ?? 3;
   // The agent works inside agentWorkspaceDir; verification runs in workspaceDir.
   const agentDir = opts.agentWorkspaceDir ?? opts.workspaceDir ?? os.tmpdir();
   let strategy: Strategy | undefined;
   let prevTestSummary: TestSummary | null = null;
 
-  for (let i = 0; i < maxRetries; i++) {
-    console.log(`\n--- Iteration ${i + 1} / ${maxRetries} ---`);
+  const run: Run = {
+    id: Date.now().toString(),
+    state: "INIT",
+    iteration: 0,
+    lastFailure: undefined,
+    history: [],
+  };
+
+  while (true) {
+    run.iteration += 1;
+    run.state = run.iteration === 1 ? "RUNNING" : "RETRYING";
+
+    console.log(`\n--- Iteration ${run.iteration} / ${maxRetries} ---`);
 
     const result = await runClaudeAgent(task, agentDir, { strategy });
 
@@ -33,10 +65,13 @@ export async function runTask(
       console.log(`failure: ${failure.type} → strategy: ${strategy.action}`);
 
       if (strategy.action === "escalate") {
+        recordStep(run, result, failure, strategy, "escalate");
+        run.lastFailure = failure;
+        run.state = "ESCALATED";
         writeEvidence(
           {
             taskId: task.id,
-            iteration: i + 1,
+            iteration: run.iteration,
             verifyPass: false,
             verifyExitCode: -1,
             decision: "escalate",
@@ -47,6 +82,7 @@ export async function runTask(
           },
           opts.evidenceDir,
         );
+        persistRun(run, opts.evidenceDir);
         throw new Error(`Task ${task.id} escalated: ${strategy.reason}`);
       }
 
@@ -54,10 +90,13 @@ export async function runTask(
         console.log("rollback not yet implemented, retrying");
       }
 
+      recordStep(run, result, failure, strategy, "reject");
+      run.lastFailure = failure;
+
       writeEvidence(
         {
           taskId: task.id,
-          iteration: i + 1,
+          iteration: run.iteration,
           verifyPass: false,
           verifyExitCode: -1,
           decision: "reject",
@@ -68,6 +107,11 @@ export async function runTask(
         },
         opts.evidenceDir,
       );
+
+      if (run.iteration >= maxRetries) {
+        run.state = "ESCALATED";
+        break;
+      }
       continue;
     }
 
@@ -84,10 +128,13 @@ export async function runTask(
         console.log(`failure: ${regFailure.type} → strategy: ${strategy.action}`);
 
         if (strategy.action === "escalate") {
+          recordStep(run, result, regFailure, strategy, "escalate");
+          run.lastFailure = regFailure;
+          run.state = "ESCALATED";
           writeEvidence(
             {
               taskId: task.id,
-              iteration: i + 1,
+              iteration: run.iteration,
               verifyPass: false,
               verifyExitCode: -1,
               decision: "escalate",
@@ -98,6 +145,7 @@ export async function runTask(
             },
             opts.evidenceDir,
           );
+          persistRun(run, opts.evidenceDir);
           throw new Error(`Task ${task.id} escalated: ${strategy.reason}`);
         }
 
@@ -105,10 +153,13 @@ export async function runTask(
           console.log("rollback not yet implemented, retrying");
         }
 
+        recordStep(run, result, regFailure, strategy, "reject");
+        run.lastFailure = regFailure;
+
         writeEvidence(
           {
             taskId: task.id,
-            iteration: i + 1,
+            iteration: run.iteration,
             verifyPass: false,
             verifyExitCode: -1,
             decision: "reject",
@@ -119,6 +170,11 @@ export async function runTask(
           },
           opts.evidenceDir,
         );
+
+        if (run.iteration >= maxRetries) {
+          run.state = "ESCALATED";
+          break;
+        }
         continue;
       }
 
@@ -132,7 +188,7 @@ export async function runTask(
     writeEvidence(
       {
         taskId: task.id,
-        iteration: i + 1,
+        iteration: run.iteration,
         verifyPass: vf === null,
         verifyExitCode: vf?.exitCode ?? 0,
         decision: vf === null ? "accept" : "retry",
@@ -148,10 +204,21 @@ export async function runTask(
     console.log(`decision: ${vf === null ? "accept" : "retry"}`);
 
     if (vf === null) {
+      recordStep(run, result, undefined, undefined, "accept");
+      run.state = "ACCEPTED";
       console.log("Task accepted.");
-      return;
+      break;
+    }
+
+    recordStep(run, result, vf, strategy, "retry");
+    run.lastFailure = vf;
+
+    if (run.iteration >= maxRetries) {
+      run.state = "ESCALATED";
+      break;
     }
   }
 
-  throw new Error(`Task ${task.id} failed after ${maxRetries} retries`);
+  persistRun(run, opts.evidenceDir);
+  return run;
 }
