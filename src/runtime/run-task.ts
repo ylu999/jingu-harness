@@ -14,16 +14,19 @@ export async function runTask(
   const maxRetries = opts.maxRetries ?? task.maxRetries ?? 3;
   // The agent works inside agentWorkspaceDir; verification runs in workspaceDir.
   const agentDir = opts.agentWorkspaceDir ?? opts.workspaceDir ?? os.tmpdir();
+  let feedback: string | undefined;
 
   for (let i = 0; i < maxRetries; i++) {
     console.log(`\n--- Iteration ${i + 1} / ${maxRetries} ---`);
 
-    const result = await runClaudeAgent(task, agentDir);
+    const result = await runClaudeAgent(task, agentDir, { feedback });
 
     try {
       runInvariants(result, task);
     } catch (err) {
-      console.error("Invariant failed:", (err as Error).message);
+      const failMsg = (err as Error).message;
+      console.error("Invariant failed:", failMsg);
+      feedback = `Invariant check failed: ${failMsg}\n\nFix the issue and try again.`;
       writeEvidence(
         {
           taskId: task.id,
@@ -41,6 +44,12 @@ export async function runTask(
 
     const verify = runVerify(task.verify, opts.workspaceDir);
     const decision = decide(verify);
+
+    if (!verify.pass) {
+      feedback = `Verify failed (exit ${verify.exitCode}):\n\n${verify.logs}\n\nFix the issue and try again.`;
+    } else {
+      feedback = undefined;
+    }
 
     writeEvidence(
       {

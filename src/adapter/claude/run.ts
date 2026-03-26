@@ -75,10 +75,15 @@ function runClaudeAgentReal(
       ? `Verify command: ${task.verify.command}\n\n`
       : "";
 
+  const feedbackSection = opts.feedback
+    ? `\n\n## Previous attempt failed\n\nVerify output:\n\`\`\`\n${opts.feedback}\n\`\`\`\nFix the issue above.`
+    : "";
+
   const prompt =
     `Task: ${task.goal}\n\n` +
     verifyLine +
-    `Use tools to explore and fix. Run verify. Do not explain.`;
+    `Use tools to explore and fix. Run verify. Do not explain.` +
+    feedbackSection;
 
   const timeoutMs = opts.timeoutMs ?? 180_000;
 
@@ -142,8 +147,12 @@ function runClaudeAgentReal(
 function runClaudeAgentMock(
   task: TaskSpec,
   workspaceDir: string,
+  opts: ClaudeAdapterOptions = {},
 ): ExecutionResult {
-  console.log(`[mock-agent] task: ${task.goal}`);
+  console.log(`[mock-agent] task: ${task.goal}${opts.feedback ? " (with feedback)" : ""}`);
+  if (opts.feedback) {
+    console.log(`[mock-agent] feedback received (${opts.feedback.length} chars)`);
+  }
 
   const fixPath = path.join(workspaceDir, "src", "math.js");
   if (fs.existsSync(fixPath)) {
@@ -180,5 +189,5 @@ export async function runClaudeAgent(
     return runClaudeAgentReal(task, workspaceDir, opts);
   }
 
-  return runClaudeAgentMock(task, workspaceDir);
+  return runClaudeAgentMock(task, workspaceDir, opts);
 }
