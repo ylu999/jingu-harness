@@ -1,17 +1,10 @@
-export type VerifyPassCondition =
-  | { type: "exit_code"; equals: number };
-
-export type VerifySpec = {
-  type: "command";
-  command: string;
-  passCondition: VerifyPassCondition;
-};
+export type { VerifySpec } from "./verify/verify-spec.js";
 
 export type TaskSpec = {
   id: string;
   goal: string;
   allowedFiles: string[];
-  verify: VerifySpec;
+  verify: import("./verify/verify-spec.js").VerifySpec;
   maxRetries?: number;
 };
 

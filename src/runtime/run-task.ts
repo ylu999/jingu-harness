@@ -36,7 +36,7 @@ export async function runTask(
       continue;
     }
 
-    const verify = runVerify(task, opts.workspaceDir);
+    const verify = runVerify(task.verify, opts.workspaceDir);
     const decision = decide(verify);
 
     writeEvidence(
