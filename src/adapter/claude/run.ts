@@ -75,8 +75,22 @@ function runClaudeAgentReal(
       ? `Verify command: ${task.verify.command}\n\n`
       : "";
 
-  const feedbackSection = opts.feedback
-    ? `\n\n## Previous attempt failed\n\nVerify output:\n\`\`\`\n${opts.feedback}\n\`\`\`\nFix the issue above.`
+  // Prefer strategy.feedback over raw feedback string
+  const effectiveFeedback =
+    opts.strategy && "feedback" in opts.strategy
+      ? opts.strategy.feedback
+      : opts.feedback;
+
+  if (opts.strategy?.action === "escalate") {
+    throw new Error(`Escalation required: ${opts.strategy.reason}`);
+  }
+
+  if (opts.strategy?.action === "rollback_and_retry") {
+    console.log("[agent] rollback not yet implemented, retrying");
+  }
+
+  const feedbackSection = effectiveFeedback
+    ? `\n\n## Previous attempt failed\n\nVerify output:\n\`\`\`\n${effectiveFeedback}\n\`\`\`\nFix the issue above.`
     : "";
 
   const prompt =
@@ -149,9 +163,22 @@ function runClaudeAgentMock(
   workspaceDir: string,
   opts: ClaudeAdapterOptions = {},
 ): ExecutionResult {
-  console.log(`[mock-agent] task: ${task.goal}${opts.feedback ? " (with feedback)" : ""}`);
-  if (opts.feedback) {
-    console.log(`[mock-agent] feedback received (${opts.feedback.length} chars)`);
+  const effectiveFeedback =
+    opts.strategy && "feedback" in opts.strategy
+      ? opts.strategy.feedback
+      : opts.feedback;
+
+  if (opts.strategy?.action === "escalate") {
+    throw new Error(`Escalation required: ${opts.strategy.reason}`);
+  }
+
+  if (opts.strategy?.action === "rollback_and_retry") {
+    console.log("[mock-agent] rollback not yet implemented, retrying");
+  }
+
+  console.log(`[mock-agent] task: ${task.goal}${effectiveFeedback ? " (with feedback)" : ""}${opts.strategy ? ` [strategy: ${opts.strategy.action}]` : ""}`);
+  if (effectiveFeedback) {
+    console.log(`[mock-agent] feedback received (${effectiveFeedback.length} chars)`);
   }
 
   const fixPath = path.join(workspaceDir, "src", "math.js");

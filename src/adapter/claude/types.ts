@@ -1,8 +1,10 @@
+import type { Strategy } from "../../strategy/types.js";
+
 export type ClaudeAdapterOptions = {
   timeoutMs?: number;
   strategyHint?: string;
-  /** Verify failure logs from the previous iteration, fed back to the agent. */
-  feedback?: string;
+  feedback?: string;       // keep for backward compat
+  strategy?: Strategy;     // new: preferred over feedback
   /** Set true to use the real Claude CLI instead of the mock. */
   real?: boolean;
 };

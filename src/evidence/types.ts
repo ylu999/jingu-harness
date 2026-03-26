@@ -7,4 +7,5 @@ export type EvidenceEntry = {
   changedFiles: string[];
   timestamp: number;
   failureType?: string;
+  strategyAction?: string;   // NEW
 };

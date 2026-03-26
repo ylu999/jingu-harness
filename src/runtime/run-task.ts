@@ -6,7 +6,8 @@ import { runVerify } from "../verify/run-verify.js";
 import { runInvariants } from "../invariant/run-invariants.js";
 import { parseTestSummary, checkRegression } from "../invariant/regression.js";
 import type { TestSummary } from "../invariant/regression.js";
-import { buildFeedback } from "../adapter/feedback.js";
+import { mapFailureToStrategy } from "../strategy/map.js";
+import type { Strategy } from "../strategy/types.js";
 import { writeEvidence } from "../evidence/write.js";
 
 export async function runTask(
@@ -16,19 +17,43 @@ export async function runTask(
   const maxRetries = opts.maxRetries ?? task.maxRetries ?? 3;
   // The agent works inside agentWorkspaceDir; verification runs in workspaceDir.
   const agentDir = opts.agentWorkspaceDir ?? opts.workspaceDir ?? os.tmpdir();
-  let feedback: string | undefined;
+  let strategy: Strategy | undefined;
   let prevTestSummary: TestSummary | null = null;
 
   for (let i = 0; i < maxRetries; i++) {
     console.log(`\n--- Iteration ${i + 1} / ${maxRetries} ---`);
 
-    const result = await runClaudeAgent(task, agentDir, { feedback });
+    const result = await runClaudeAgent(task, agentDir, { strategy });
 
     const invariantFailures = runInvariants(result, task);
     if (invariantFailures.length > 0) {
       const failure = invariantFailures[0]!;
       console.error("Invariant failed:", failure.type);
-      feedback = buildFeedback(failure);
+      strategy = mapFailureToStrategy(failure);
+      console.log(`failure: ${failure.type} → strategy: ${strategy.action}`);
+
+      if (strategy.action === "escalate") {
+        writeEvidence(
+          {
+            taskId: task.id,
+            iteration: i + 1,
+            verifyPass: false,
+            verifyExitCode: -1,
+            decision: "escalate",
+            changedFiles: result.changedFiles,
+            timestamp: Date.now(),
+            failureType: failure.type,
+            strategyAction: strategy.action,
+          },
+          opts.evidenceDir,
+        );
+        throw new Error(`Task ${task.id} escalated: ${strategy.reason}`);
+      }
+
+      if (strategy.action === "rollback_and_retry") {
+        console.log("rollback not yet implemented, retrying");
+      }
+
       writeEvidence(
         {
           taskId: task.id,
@@ -39,6 +64,7 @@ export async function runTask(
           changedFiles: result.changedFiles,
           timestamp: Date.now(),
           failureType: failure.type,
+          strategyAction: strategy.action,
         },
         opts.evidenceDir,
       );
@@ -54,7 +80,31 @@ export async function runTask(
 
       if (regFailure) {
         console.error("Regression detected:", regFailure.message);
-        feedback = buildFeedback(regFailure);
+        strategy = mapFailureToStrategy(regFailure);
+        console.log(`failure: ${regFailure.type} → strategy: ${strategy.action}`);
+
+        if (strategy.action === "escalate") {
+          writeEvidence(
+            {
+              taskId: task.id,
+              iteration: i + 1,
+              verifyPass: false,
+              verifyExitCode: -1,
+              decision: "escalate",
+              changedFiles: result.changedFiles,
+              timestamp: Date.now(),
+              failureType: "REGRESSION",
+              strategyAction: strategy.action,
+            },
+            opts.evidenceDir,
+          );
+          throw new Error(`Task ${task.id} escalated: ${strategy.reason}`);
+        }
+
+        if (strategy.action === "rollback_and_retry") {
+          console.log("rollback not yet implemented, retrying");
+        }
+
         writeEvidence(
           {
             taskId: task.id,
@@ -65,15 +115,17 @@ export async function runTask(
             changedFiles: result.changedFiles,
             timestamp: Date.now(),
             failureType: "REGRESSION",
+            strategyAction: strategy.action,
           },
           opts.evidenceDir,
         );
         continue;
       }
 
-      feedback = buildFeedback(vf);
+      strategy = mapFailureToStrategy(vf);
+      console.log(`failure: ${vf.type} → strategy: ${strategy.action}`);
     } else {
-      feedback = undefined;
+      strategy = undefined;
       prevTestSummary = null;
     }
 
@@ -87,6 +139,7 @@ export async function runTask(
         changedFiles: result.changedFiles,
         timestamp: Date.now(),
         failureType: vf?.type,
+        strategyAction: strategy?.action,
       },
       opts.evidenceDir,
     );
