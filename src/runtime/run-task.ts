@@ -4,6 +4,8 @@ import type { RunTaskOptions } from "./types.js";
 import { runClaudeAgent } from "../adapter/claude/run.js";
 import { runVerify } from "../verify/run-verify.js";
 import { runInvariants } from "../invariant/run-invariants.js";
+import { parseTestSummary, checkRegression } from "../invariant/regression.js";
+import type { TestSummary } from "../invariant/regression.js";
 import { buildFeedback } from "../adapter/feedback.js";
 import { writeEvidence } from "../evidence/write.js";
 
@@ -15,6 +17,7 @@ export async function runTask(
   // The agent works inside agentWorkspaceDir; verification runs in workspaceDir.
   const agentDir = opts.agentWorkspaceDir ?? opts.workspaceDir ?? os.tmpdir();
   let feedback: string | undefined;
+  let prevTestSummary: TestSummary | null = null;
 
   for (let i = 0; i < maxRetries; i++) {
     console.log(`\n--- Iteration ${i + 1} / ${maxRetries} ---`);
@@ -42,12 +45,36 @@ export async function runTask(
       continue;
     }
 
-    const vf = runVerify(task.verify, opts.workspaceDir);
+    const vf = await runVerify(task.verify, opts.workspaceDir);
 
     if (vf !== null) {
+      const summary = parseTestSummary(vf.logs);
+      const regFailure = checkRegression(prevTestSummary, summary);
+      prevTestSummary = summary;
+
+      if (regFailure) {
+        console.error("Regression detected:", regFailure.message);
+        feedback = buildFeedback(regFailure);
+        writeEvidence(
+          {
+            taskId: task.id,
+            iteration: i + 1,
+            verifyPass: false,
+            verifyExitCode: -1,
+            decision: "reject",
+            changedFiles: result.changedFiles,
+            timestamp: Date.now(),
+            failureType: "REGRESSION",
+          },
+          opts.evidenceDir,
+        );
+        continue;
+      }
+
       feedback = buildFeedback(vf);
     } else {
       feedback = undefined;
+      prevTestSummary = null;
     }
 
     writeEvidence(

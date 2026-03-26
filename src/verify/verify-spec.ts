@@ -26,9 +26,16 @@ export type CompositeVerify = {
   checks: VerifySpec[];
 };
 
+export type SemanticVerify = {
+  type: "semantic";
+  prompt: string;
+  model?: string;
+};
+
 export type VerifySpec =
   | CommandVerify
   | FileExistsVerify
   | TextMatchVerify
   | JsonSchemaVerify
-  | CompositeVerify;
+  | CompositeVerify
+  | SemanticVerify;

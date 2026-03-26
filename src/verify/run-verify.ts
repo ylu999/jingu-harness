@@ -3,8 +3,9 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { VerifySpec } from "./verify-spec.js";
 import type { VerifyFailure } from "../failure/types.js";
+import { runSemanticVerify } from "./run-semantic.js";
 
-export function runVerify(spec: VerifySpec, workspaceDir: string): VerifyFailure | null {
+export async function runVerify(spec: VerifySpec, workspaceDir: string): Promise<VerifyFailure | null> {
   switch (spec.type) {
     case "command": {
       const [cmd, ...args] = spec.command.split(" ");
@@ -55,7 +56,7 @@ export function runVerify(spec: VerifySpec, workspaceDir: string): VerifyFailure
 
     case "all": {
       for (const check of spec.checks) {
-        const failure = runVerify(check, workspaceDir);
+        const failure = await runVerify(check, workspaceDir);
         if (failure !== null) return failure;
       }
       return null;
@@ -64,12 +65,15 @@ export function runVerify(spec: VerifySpec, workspaceDir: string): VerifyFailure
     case "any": {
       const failures: VerifyFailure[] = [];
       for (const check of spec.checks) {
-        const failure = runVerify(check, workspaceDir);
+        const failure = await runVerify(check, workspaceDir);
         if (failure === null) return null;
         failures.push(failure);
       }
       return { type: "VERIFY_FAIL", logs: failures.map(f => f.logs).join("; "), exitCode: 1 };
     }
+
+    case "semantic":
+      return runSemanticVerify(spec, { output: "" });
 
     default:
       throw new Error(`Unknown verify type: ${(spec as { type: string }).type}`);

@@ -8,6 +8,8 @@ export function buildFeedback(failure: Failure): string {
       return `You modified a forbidden file: ${failure.file}\n\nOnly modify files matching the allowedFiles patterns.\nFix your changes.`;
     case "NO_OP":
       return `You did not make any changes.\n\nYou must modify the code to solve the problem.`;
+    case "REGRESSION":
+      return `Your changes introduced regressions.\n\n${failure.message}\n\nFix without breaking existing tests.`;
     default:
       return "Fix the issue and try again.";
   }
