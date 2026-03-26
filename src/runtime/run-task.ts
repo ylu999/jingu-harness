@@ -117,7 +117,7 @@ export async function runTask(
       continue;
     }
 
-    const vf = await runVerify(task.verify, opts.workspaceDir);
+    const vf = await runVerify(task.verify, opts.workspaceDir, result.logs);
 
     if (vf !== null) {
       const summary = parseTestSummary(vf.logs);

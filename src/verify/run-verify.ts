@@ -1,11 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { Ajv } from "ajv";
 import type { VerifySpec } from "./verify-spec.js";
 import type { VerifyFailure } from "../failure/types.js";
 import { runSemanticVerify } from "./run-semantic.js";
 
-export async function runVerify(spec: VerifySpec, workspaceDir: string): Promise<VerifyFailure | null> {
+const ajv = new Ajv();
+
+export async function runVerify(spec: VerifySpec, workspaceDir: string, agentOutput?: string): Promise<VerifyFailure | null> {
   switch (spec.type) {
     case "command": {
       const [cmd, ...args] = spec.command.split(" ");
@@ -46,9 +49,10 @@ export async function runVerify(spec: VerifySpec, workspaceDir: string): Promise
       const fullPath = path.isAbsolute(spec.path) ? spec.path : path.join(workspaceDir, spec.path);
       try {
         const data = JSON.parse(fs.readFileSync(fullPath, "utf-8")) as unknown;
-        const pass = typeof data === "object" && data !== null;
-        if (pass) return null;
-        return { type: "VERIFY_FAIL", logs: `json_schema: ${spec.path} valid=false`, exitCode: 1 };
+        const validate = ajv.compile(spec.schema);
+        const valid = validate(data);
+        if (valid) return null;
+        return { type: "VERIFY_FAIL", logs: `json_schema: ${ajv.errorsText(validate.errors)}`, exitCode: 1 };
       } catch (e) {
         return { type: "VERIFY_FAIL", logs: `json_schema: parse error: ${(e as Error).message}`, exitCode: 1 };
       }
@@ -56,7 +60,7 @@ export async function runVerify(spec: VerifySpec, workspaceDir: string): Promise
 
     case "all": {
       for (const check of spec.checks) {
-        const failure = await runVerify(check, workspaceDir);
+        const failure = await runVerify(check, workspaceDir, agentOutput);
         if (failure !== null) return failure;
       }
       return null;
@@ -65,7 +69,7 @@ export async function runVerify(spec: VerifySpec, workspaceDir: string): Promise
     case "any": {
       const failures: VerifyFailure[] = [];
       for (const check of spec.checks) {
-        const failure = await runVerify(check, workspaceDir);
+        const failure = await runVerify(check, workspaceDir, agentOutput);
         if (failure === null) return null;
         failures.push(failure);
       }
@@ -73,7 +77,7 @@ export async function runVerify(spec: VerifySpec, workspaceDir: string): Promise
     }
 
     case "semantic":
-      return runSemanticVerify(spec, { output: "" });
+      return runSemanticVerify(spec, { output: agentOutput ?? "" });
 
     default:
       throw new Error(`Unknown verify type: ${(spec as { type: string }).type}`);
