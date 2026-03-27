@@ -22,5 +22,5 @@ export type AdmissionResult<TUnit> = {
   rejectedUnits: AdmittedUnit<TUnit>[]; // rejected only
   hasConflicts: boolean;
   auditId: string; // links to AuditEntry
-  retryAttempts?: number;
+  retryAttempts: number; // 1 = no retry (single LLM call), >1 = retried
 };

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Proposal } from "../types/proposal.js";
-import type { SupportRef } from "../types/support.js";
+import type { SupportRef, UnitWithSupport } from "../types/support.js";
 import type { HarnessPolicy } from "../types/policy.js";
 import type { AdmissionResult } from "../types/admission.js";
 import type { AuditWriter } from "../types/audit.js";
@@ -59,6 +59,7 @@ export class GateRunner<TUnit> {
         rejectedUnits: structureRejected,
         hasConflicts: false,
         auditId,
+        retryAttempts: 1,
       };
     }
 
@@ -78,8 +79,14 @@ export class GateRunner<TUnit> {
     });
 
     // Step 3: Conflict detection (cross-unit)
+    // Reconstruct UnitWithSupport[] from evaluationResults so policy can inspect bound evidence
+    const unitsWithSupport: UnitWithSupport<TUnit>[] = evaluationResults.map(({ unit, supportIds }) => ({
+      unit,
+      supportIds,
+      supportRefs: supportPool.filter((s) => supportIds.includes(s.id)),
+    }));
     const conflictAnnotations = this.policy.detectConflicts(
-      proposal.units,
+      unitsWithSupport,
       supportPool
     );
 
@@ -135,6 +142,7 @@ export class GateRunner<TUnit> {
       rejectedUnits: rejected,
       hasConflicts: conflictAnnotations.length > 0,
       auditId,
+      retryAttempts: 1,
     };
   }
 }

@@ -126,7 +126,7 @@ export function explainResult<TUnit>(
       (u) => u.status === "approved_with_conflict"
     ).length,
     rejected: result.rejectedUnits.length,
-    retryAttempts: result.retryAttempts ?? 0,
+    retryAttempts: result.retryAttempts,
     gateReasonCodes: [...reasonCodes],
   };
 }

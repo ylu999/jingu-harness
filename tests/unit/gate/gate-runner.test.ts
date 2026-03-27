@@ -84,6 +84,7 @@ describe("GateRunner", () => {
     assert.equal(result.rejectedUnits[0].evaluationResults[0].reasonCode, "STRUCTURE_INVALID");
     assert.equal(result.hasConflicts, false);
     assert.ok(result.auditId);
+    assert.equal(result.retryAttempts, 1);
   });
 
   it("Test 2: all units approved → admittedUnits all status=approved", async () => {
@@ -102,6 +103,7 @@ describe("GateRunner", () => {
     for (const u of result.admittedUnits) {
       assert.equal(u.status, "approved");
     }
+    assert.equal(result.retryAttempts, 1);
   });
 
   it("Test 3: one unit rejected → in rejectedUnits", async () => {
