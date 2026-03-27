@@ -188,7 +188,7 @@ Contradictory claims are both admitted with `approved_with_conflict`. The gate n
 
 ## Real-world examples
 
-The `examples/` directory contains five runnable domain policies. Each one shows how to write a `HarnessPolicy` for a real scenario and what the gate catches that a plain RAG pipeline would not.
+The `examples/` directory contains five runnable domain policies. Each one shows how to write a `GatePolicy` for a real scenario and what the gate catches that a plain RAG pipeline would not.
 
 ### E-commerce catalog chatbot (`ecommerce-catalog-policy.ts`)
 
@@ -257,38 +257,39 @@ With jingu-trust-gate:
 ## Quick start
 
 ```ts
-import { createHarness, ClaudeContextAdapter } from "jingu-trust-gate";
-import type { HarnessPolicy } from "jingu-trust-gate";
+import { createTrustGate } from "jingu-trust-gate";
+import type { GatePolicy, Proposal, SupportRef, UnitWithSupport,
+              UnitEvaluationResult, AdmittedUnit, VerifiedContext,
+              StructureValidationResult, RetryFeedback, ConflictAnnotation,
+              RenderContext, RetryContext } from "jingu-trust-gate";
 
 type Item = { id: string; text: string; grade: "proven" | "derived" };
 
 // Policy = your domain rules. The gate core has none.
-const policy: HarnessPolicy<Item> = {
-  validateStructure: (proposal) => ({
-    kind: "structure",
+const policy: GatePolicy<Item> = {
+  validateStructure: (proposal): StructureValidationResult => ({
     valid: proposal.units.length > 0,
     errors: proposal.units.length === 0
       ? [{ field: "units", reasonCode: "EMPTY_PROPOSAL" }]
       : [],
   }),
 
-  bindSupport: (unit, pool) => {
+  bindSupport: (unit: Item, pool: SupportRef[]): UnitWithSupport<Item> => {
     const matched = pool.filter(s => s.sourceId === unit.id);
     // supportIds: for audit traceability; supportRefs: for attribute inspection in evaluateUnit
     return { unit, supportIds: matched.map(s => s.id), supportRefs: matched };
   },
 
-  evaluateUnit: ({ unit, supportIds }) => ({
-    kind: "unit",
+  evaluateUnit: ({ unit, supportIds }: UnitWithSupport<Item>): UnitEvaluationResult => ({
     unitId: unit.id,
     decision: unit.grade === "proven" && supportIds.length === 0 ? "reject" : "approve",
     reasonCode: unit.grade === "proven" && supportIds.length === 0 ? "MISSING_EVIDENCE" : "OK",
   }),
 
   // detectConflicts receives UnitWithSupport[] so you can inspect bound evidence per unit
-  detectConflicts: (_units, _pool) => [],
+  detectConflicts: (_units: UnitWithSupport<Item>[], _pool: SupportRef[]): ConflictAnnotation[] => [],
 
-  render: (admittedUnits, _support, _ctx) => ({
+  render: (admittedUnits: AdmittedUnit<Item>[], _pool: SupportRef[], _ctx: RenderContext): VerifiedContext => ({
     admittedBlocks: admittedUnits.map(u => ({
       sourceId: u.unitId,
       content: (u.unit as Item).text,
@@ -297,7 +298,7 @@ const policy: HarnessPolicy<Item> = {
     summary: { admitted: admittedUnits.length, rejected: 0, conflicts: 0 },
   }),
 
-  buildRetryFeedback: (results, _ctx) => ({
+  buildRetryFeedback: (results: UnitEvaluationResult[], _ctx: RetryContext): RetryFeedback => ({
     summary: `${results.length} unit(s) failed`,
     errors: results.map(r => ({ unitId: r.unitId, reasonCode: r.reasonCode })),
   }),
@@ -306,14 +307,11 @@ const policy: HarnessPolicy<Item> = {
 const gate = createTrustGate({ policy });
 
 const result  = await gate.admit(proposal, supportPool);
-const context = gate.render(result);             // VerifiedContext → pass to LLM API
-const summary = gate.explain(result);            // { approved, rejected, conflicts, ... }
-
-// Convert to Claude API wire format
-const blocks  = new ClaudeContextAdapter().adapt(context);
+const context = gate.render(result);   // VerifiedContext → pass to LLM API
+const summary = gate.explain(result);  // { approved, rejected, conflicts, ... }
 ```
 
-## HarnessPolicy interface
+## GatePolicy interface
 
 Implement all six methods. None may call an LLM.
 
@@ -329,7 +327,7 @@ Implement all six methods. None may call an LLM.
 Full signatures:
 
 ```ts
-interface HarnessPolicy<TUnit> {
+interface GatePolicy<TUnit> {
   validateStructure(proposal: Proposal<TUnit>): StructureValidationResult;
   bindSupport(unit: TUnit, supportPool: SupportRef[]): UnitWithSupport<TUnit>;
   evaluateUnit(unitWithSupport: UnitWithSupport<TUnit>, context: { proposalId: string; proposalKind: string }): UnitEvaluationResult;
@@ -341,21 +339,20 @@ interface HarnessPolicy<TUnit> {
 
 ## Adapters
 
-Each adapter converts `VerifiedContext` to the wire format expected by a specific LLM API. Grade caveats, unsupported attributes, and conflict notes are inlined into content so the downstream model sees them as contextual constraints.
+`VerifiedContext` is abstract. Implement `ContextAdapter<TOutput>` to convert it to the wire format expected by your LLM API. Grade caveats, unsupported attributes, and conflict notes are inlined so the downstream model sees them as contextual constraints.
 
 ```ts
-// Claude API — search_result blocks with optional citations
-const blocks = new ClaudeContextAdapter({ citations: true }).adapt(verifiedCtx);
-// blocks: ClaudeSearchResultBlock[]  (type: "search_result")
+import type { ContextAdapter } from "jingu-trust-gate";
+import type { VerifiedContext } from "jingu-trust-gate";
 
-// OpenAI — tool result or user message
-const msg = new OpenAIContextAdapter({ mode: "tool", toolCallId: call.id }).adapt(verifiedCtx);
-// msg: OpenAIChatMessage  (role: "tool" | "user")
-
-// Gemini — Content with parts array
-const content = new GeminiContextAdapter({ role: "user" }).adapt(verifiedCtx);
-// content: GeminiContent  (role: "user" | "function", parts: GeminiTextPart[])
+class MyAdapter implements ContextAdapter<MyWireFormat> {
+  adapt(context: VerifiedContext): MyWireFormat {
+    // serialize context.admittedBlocks into your API's expected shape
+  }
+}
 ```
+
+Reference implementations for Claude, OpenAI, and Gemini are in [`examples/adapter-examples.ts`](examples/adapter-examples.ts). Copy and adapt as needed — they are not part of the published package.
 
 ## SupportRef ID clarification
 
@@ -369,22 +366,37 @@ When writing `bindSupport`, match on `sourceId` (business key). The `id` fields 
 ## Module structure
 
 ```
-src/types/       — core type definitions (Proposal, SupportRef, AdmissionResult, ...)
-src/gate/        — GateRunner (4-step pipeline, zero LLM)
-src/audit/       — FileAuditWriter, audit entry builder
-src/retry/       — runWithRetry, RetryFeedback utils
-src/conflict/    — ConflictAnnotation surfacing helpers
-src/renderer/    — BaseRenderer → VerifiedContext
-src/adapters/    — ClaudeContextAdapter, OpenAIContextAdapter, GeminiContextAdapter
+src/types/        — core type definitions (Proposal, SupportRef, AdmissionResult, ...)
+src/gate/         — GateRunner (4-step pipeline, zero LLM)
+src/audit/        — FileAuditWriter, audit entry builder
+src/retry/        — runWithRetry, RetryFeedback utils
+src/conflict/     — ConflictAnnotation surfacing helpers
+src/renderer/     — BaseRenderer → VerifiedContext
+src/adapters/     — ContextAdapter interface (implementations in examples/)
 src/trust-gate.ts — createTrustGate() public API
+
+examples/
+  adapter-examples.ts        — Claude, OpenAI, Gemini adapter reference implementations
+  medical-symptom-policy.ts  — health assistant, diagnosis/treatment gate
+  legal-contract-policy.ts   — contract review, term/figure/right grounding
+  hpc-diagnostic-policy.ts   — GPU cluster SRE, severity/scope/metric gate
+  ecommerce-catalog-policy.ts — product chatbot, feature/stock/conflict gate
+  bi-analytics-policy.ts     — BI assistant, value/period/dimension gate
 ```
 
 ## Install and run
 
 ```bash
 npm install
-npm test     # 72 tests
+npm test     # 85 tests
 npm run demo # narrative demo with 6 scenarios
+
+# Run examples
+node dist/examples/medical-symptom-policy.js
+node dist/examples/legal-contract-policy.js
+node dist/examples/hpc-diagnostic-policy.js
+node dist/examples/ecommerce-catalog-policy.js
+node dist/examples/bi-analytics-policy.js
 ```
 
 ## FAQ
