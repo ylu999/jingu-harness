@@ -13,7 +13,6 @@ export type {
   UnitStatus,
   AdmittedUnit,
   AdmissionResult,
-  GradeOrdering,
   HarnessPolicy,
   RetryFeedback,
   RetryConfig,

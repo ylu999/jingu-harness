@@ -9,18 +9,7 @@ import type { AdmittedUnit } from "./admission.js";
 import type { VerifiedContext, RenderContext } from "./renderer.js";
 import type { RetryFeedback, RetryContext } from "./retry.js";
 
-// Grade ordering — policy must provide if it uses grade-based downgrade
-export interface GradeOrdering {
-  // Returns true if transition from→to is a valid downgrade (from is "higher confidence")
-  canTransition(from: string, to: string): boolean;
-  // Returns true if a is lower confidence than b
-  isLowerThan(a: string, b: string): boolean;
-}
-
 export interface HarnessPolicy<TUnit> {
-  // Optional: grade ordering for validating downgrade transitions
-  gradeOrdering?: GradeOrdering;
-
   // Step 1: validate Proposal structure (proposal-level)
   validateStructure(proposal: Proposal<TUnit>): StructureValidationResult;
 
