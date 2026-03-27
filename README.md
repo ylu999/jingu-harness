@@ -77,6 +77,70 @@ npm install jingu-trust-gate
 pip install jingu-trust-gate
 ```
 
+## Quick start
+
+```ts
+import { createTrustGate } from "jingu-trust-gate";
+import { approve, reject } from "jingu-trust-gate/helpers";
+import type { GatePolicy, Proposal, SupportRef, UnitWithSupport,
+              UnitEvaluationResult, AdmittedUnit, VerifiedContext,
+              StructureValidationResult, RetryFeedback, ConflictAnnotation,
+              RenderContext, RetryContext } from "jingu-trust-gate";
+
+type Claim = { id: string; text: string; grade: "proven" | "derived"; evidenceRefs: string[] };
+
+// All domain logic lives in GatePolicy. The gate core has none.
+const policy: GatePolicy<Claim> = {
+  validateStructure: (p) => ({ valid: p.units.length > 0, errors: [] }),
+
+  bindSupport: (unit, pool) => {
+    const matched = pool.filter(s => unit.evidenceRefs.includes(s.sourceId));
+    return { unit, supportIds: matched.map(s => s.id), supportRefs: matched };
+  },
+
+  evaluateUnit: ({ unit, supportIds }) =>
+    unit.grade === "proven" && supportIds.length === 0
+      ? reject(unit.id, "MISSING_EVIDENCE")
+      : approve(unit.id),
+
+  detectConflicts: () => [],
+
+  render: (admitted) => ({
+    admittedBlocks: admitted.map(u => ({ sourceId: u.unitId, content: u.unit.text })),
+    summary: { admitted: admitted.length, rejected: 0, conflicts: 0 },
+  }),
+
+  buildRetryFeedback: (results) => ({
+    summary: `${results.length} unit(s) failed`,
+    errors: results.map(r => ({ unitId: r.unitId, reasonCode: r.reasonCode })),
+  }),
+};
+
+const gate = createTrustGate({ policy });
+
+const result  = await gate.admit(proposal, supportPool);
+const context = gate.render(result);   // VerifiedContext → pass to LLM API
+const summary = gate.explain(result);  // { approved, rejected, conflicts, ... }
+
+// What came through:
+for (const block of context.admittedBlocks)
+  console.log(`admitted: "${block.sourceId}"  "${block.content}"`);
+// admitted: "u1"  "Fact with evidence"
+
+// What was blocked (and why):
+for (const u of result.rejectedUnits)
+  console.log(`rejected: "${u.unitId}"  reason="${u.evaluationResults[0]?.reasonCode}"`);
+// rejected: "u2"  reason="MISSING_EVIDENCE"
+```
+
+## Three iron laws
+
+1. **Zero LLM calls in the gate** — all four steps are deterministic code. No AI judging AI. The same input always produces the same admission decision.
+
+2. **Policy is injected, not embedded** — the gate core has zero domain logic. Every business rule lives in your `GatePolicy`. Swap the policy, the gate stays identical.
+
+3. **Every admission is audited** — append-only JSONL at `.jingu-trust-gate/audit.jsonl`. Every claim's fate is on record with its `auditId`, reason code, and timestamp.
+
 ## This is not a guardrails framework
 
 Guardrails frameworks check whether output is **safe or well-formed** — they block toxic content, enforce schemas, detect PII. That is a different problem.
@@ -163,14 +227,6 @@ The distinction matters:
 - The gate executes policy deterministically — it does not embed domain-specific truth semantics
 
 This design is intentional. The same gate instance works across domains because the semantics of "what counts as supported" live in your `GatePolicy`, not in the gate engine.
-
-## Three iron laws
-
-1. **Gate Engine: zero LLM calls** — all four steps are deterministic code, not prompts. The gate is auditable and reproducible. No AI judging AI.
-
-2. **Policy is injected** — the gate core contains zero business logic. Your domain rules live entirely in `GatePolicy`. The same gate instance works for product search, medical records, or financial data — the policy changes, the gate does not.
-
-3. **Every admission decision is written to audit log** — append-only JSONL at `.jingu-trust-gate/audit.jsonl`. Every claim's fate is on record, linkable by `auditId`.
 
 ## When to use / when NOT to use
 
@@ -283,89 +339,6 @@ With jingu-trust-gate:
 - **No cross-session state.** The gate is stateless per call. It does not remember previous admissions or detect patterns across sessions.
 - **Performance is O(units × support_pool) per admission.** For large-scale use, optimize `bindSupport` in your policy (e.g., index by `sourceId` before the call).
 - **`TUnit` has no id constraint.** The gate does not enforce that your unit type has an `id` field — that is your policy's responsibility.
-
-## Quick start
-
-```ts
-import { createTrustGate } from "jingu-trust-gate";
-import { approve, reject } from "jingu-trust-gate/helpers";
-import type { GatePolicy, Proposal, SupportRef, UnitWithSupport,
-              UnitEvaluationResult, AdmittedUnit, VerifiedContext,
-              StructureValidationResult, RetryFeedback, ConflictAnnotation,
-              RenderContext, RetryContext } from "jingu-trust-gate";
-
-type Item = { id: string; text: string; grade: "proven" | "derived" };
-
-// Policy = your domain rules. The gate core has none.
-const policy: GatePolicy<Item> = {
-  validateStructure: (proposal): StructureValidationResult => ({
-    valid: proposal.units.length > 0,
-    errors: proposal.units.length === 0
-      ? [{ field: "units", reasonCode: "EMPTY_PROPOSAL" }]
-      : [],
-  }),
-
-  bindSupport: (unit: Item, pool: SupportRef[]): UnitWithSupport<Item> => {
-    const matched = pool.filter(s => s.sourceId === unit.id);
-    // supportIds: for audit traceability; supportRefs: for attribute inspection in evaluateUnit
-    return { unit, supportIds: matched.map(s => s.id), supportRefs: matched };
-  },
-
-  evaluateUnit: ({ unit, supportIds }: UnitWithSupport<Item>): UnitEvaluationResult =>
-    unit.grade === "proven" && supportIds.length === 0
-      ? reject(unit.id, "MISSING_EVIDENCE")
-      : approve(unit.id),
-
-  // detectConflicts receives UnitWithSupport[] so you can inspect bound evidence per unit
-  detectConflicts: (_units: UnitWithSupport<Item>[], _pool: SupportRef[]): ConflictAnnotation[] => [],
-
-  render: (admittedUnits: AdmittedUnit<Item>[], _pool: SupportRef[], _ctx: RenderContext): VerifiedContext => ({
-    admittedBlocks: admittedUnits.map(u => ({
-      sourceId: u.unitId,
-      content: (u.unit as Item).text,
-      grade: u.appliedGrades[u.appliedGrades.length - 1],
-    })),
-    summary: { admitted: admittedUnits.length, rejected: 0, conflicts: 0 },
-  }),
-
-  buildRetryFeedback: (results: UnitEvaluationResult[], _ctx: RetryContext): RetryFeedback => ({
-    summary: `${results.length} unit(s) failed`,
-    errors: results.map(r => ({ unitId: r.unitId, reasonCode: r.reasonCode })),
-  }),
-};
-
-const gate = createTrustGate({ policy });
-
-const supportPool: SupportRef[] = [
-  { id: "ref-1", sourceId: "doc-1", sourceType: "observation", attributes: {} },
-];
-const proposal: Proposal<Item> = {
-  id: "prop-1", kind: "response",
-  units: [
-    { id: "u1", text: "Fact with evidence", grade: "proven" },
-    { id: "u2", text: "Hallucinated fact",  grade: "proven" },
-  ],
-};
-
-const result  = await gate.admit(proposal, supportPool);
-const context = gate.render(result);   // VerifiedContext → pass to LLM API
-const summary = gate.explain(result);  // { approved, rejected, conflicts, ... }
-
-// What came through:
-for (const block of context.admittedBlocks) {
-  console.log(`admitted: "${block.sourceId}"  content="${block.content}"`);
-}
-// admitted: "u1"  content="Fact with evidence"
-
-// What was blocked (and why):
-for (const u of result.rejectedUnits) {
-  console.log(`rejected: "${u.unitId}"  reason="${u.evaluationResults[0]?.reasonCode}"`);
-}
-// rejected: "u2"  reason="MISSING_EVIDENCE"
-
-console.log(`approved=${summary.approved}, rejected=${summary.rejected}`);
-// approved=1, rejected=1
-```
 
 ## GatePolicy interface
 
@@ -505,10 +478,11 @@ examples/
 
 ```bash
 npm install
-npm test     # 85 tests
-npm run demo # narrative demo with 6 scenarios
+npm test          # full test suite
+npm run demo:aha  # two-scenario aha-moment demo (start here)
+npm run demo      # full 8-scenario walkthrough
 
-# Run examples
+# Run any example directly after npm run build
 node dist/examples/answers/medical-symptom-policy.js
 node dist/examples/answers/legal-contract-policy.js
 node dist/examples/actions/tool-call-policy.js
@@ -581,6 +555,12 @@ Every `proven` claim fails with `MISSING_EVIDENCE`. `derived` claims also fail. 
 | gate as reasoner | The gate executes policy — it does not reason, interpret, or fill in gaps. If the policy cannot decide, it should downgrade or reject, not guess. |
 
 ## Changelog
+
+### 0.1.12
+- `demo/aha-moment-demo.ts` — standalone two-scenario demo showing the two core failure modes end-to-end, with timed pacing. Run with `npm run demo:aha`.
+- `demo/demo.ts` — added Scenario 7 (Agent Action Gate: `INTENT_NOT_ESTABLISHED`, `CONFIRM_REQUIRED`) and Scenario 8 (Preventing Memory Corruption: `INFERRED_NOT_STATED`, state drift). Now 8 scenarios.
+- README: hero section rewritten with concrete before/after examples for both failure modes. Quick start and Three iron laws moved to top.
+- Build: all `examples/` and `tests/` TypeScript errors resolved (import path fixes, API shape corrections).
 
 ### 0.1.11
 - Examples reorganized into four use-case categories: `answers/`, `actions/`, `state/`, `integration/`
