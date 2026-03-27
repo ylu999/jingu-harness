@@ -175,6 +175,66 @@ Contradictory claims are both admitted with `approved_with_conflict`. harness ne
 
 **Anti-pattern 5: Bypassing the gate** — never pass raw LLM output directly as trusted context. All LLM proposals must go through `harness.admit()`.
 
+## Real-world examples
+
+The `examples/` directory contains five runnable domain policies. Each one shows how to write a `HarnessPolicy` for a real scenario and what the gate catches that a plain RAG pipeline would not.
+
+### E-commerce catalog chatbot (`ecommerce-catalog-policy.ts`)
+
+Customer asks: "Does this headphone support noise cancellation? How many are left in stock?"
+
+Without harness: LLM asserts "active noise cancellation" when the spec only lists "passive noise isolation". Invents stock counts. Silently picks one side when two seller listings disagree on availability.
+
+With harness:
+- Feature not in `evidence.features` → `UNSUPPORTED_FEATURE` → downgraded
+- Exact count outside inventory range → `OVER_SPECIFIC_STOCK` → downgraded
+- Two listings contradict on in-stock status → `STOCK_CONFLICT` (blocking) → both rejected, LLM receives empty context and tells the customer to check the product page
+
+### HPC GPU cluster diagnostics (`hpc-diagnostic-policy.ts`)
+
+SRE agent investigates a failed training job across 8 A100 nodes.
+
+Without harness: incident report says "GPU permanently damaged, must be replaced" and "all other nodes healthy" — both unsupported by logs. SRE triggers procurement and skips checking other nodes.
+
+With harness:
+- "Must be replaced" without nvml/dmesg confirmed-loss signal → `UNSUPPORTED_SEVERITY` → downgraded
+- "All other nodes healthy" when pool only covers one node → `UNSUPPORTED_SCOPE` → downgraded
+- Two DCGM readings for the same metric disagree → `TEMPORAL_METRIC_CONFLICT` (informational) → both surfaced
+
+### Medical symptom assessment (`medical-symptom-policy.ts`)
+
+Health assistant responds to a patient describing fatigue and excessive thirst.
+
+Without harness: LLM asserts "You have diabetes" and "You should start metformin" — neither is supportable from symptom records alone.
+
+With harness:
+- Confirmed diagnosis without lab results → `DIAGNOSIS_UNCONFIRMED` → rejected
+- Treatment recommendation from symptom evidence → `TREATMENT_NOT_ADVISED` → rejected (hard rule, regardless of evidence count)
+- "Symptoms may be consistent with diabetes" at grade=proven → `OVER_CERTAIN` → downgraded to suspected
+
+### Legal contract analysis (`legal-contract-policy.ts`)
+
+Contract review tool answers: "Does this contract have a termination clause?"
+
+Without harness: LLM says "Yes, the contract includes a termination clause" when the retrieved clause only mentions "cancellation conditions". Different legal concept, different legal effect.
+
+With harness:
+- Legal term not verbatim in clause text → `TERM_NOT_IN_EVIDENCE` → rejected
+- Specific penalty percentage not in clause figures → `OVER_SPECIFIC_FIGURE` → downgraded
+- Claimed right not explicitly granted by clause → `SCOPE_EXCEEDED` → downgraded
+
+### BI analytics assistant (`bi-analytics-policy.ts`)
+
+Analyst asks: "How much did revenue grow last month?"
+
+Without harness: LLM says "Revenue grew 15%" when the actual figure from the evidence is 10%. Also asserts "total revenue" when the February record is marked incomplete.
+
+With harness:
+- Growth percentage computed from evidence does not match claim → `INCORRECT_CALCULATION` → rejected (policy does the math: `(110k−100k)/100k = 10%`)
+- Trend claim ("grew") with only one period in evidence → `MISSING_BASELINE` → downgraded
+- Completeness claim ("total") against incomplete record → `INCOMPLETE_DATA` → downgraded
+- Two ETL pipelines report different revenue for same period → `METRIC_CONFLICT` (blocking) → both rejected, analyst is told to fix the data pipeline first
+
 ## Known limitations
 
 - **harness is a judge, not an editor.** It flags problems and annotates boundaries. It does not rewrite claims, fill in missing evidence, or auto-resolve conflicts.
@@ -315,6 +375,66 @@ npm install
 npm test     # 72 tests
 npm run demo # narrative demo with 6 scenarios
 ```
+
+## FAQ
+
+**Q: Why does policy exist as code instead of a prompt?**
+LLM judgement is probabilistic and not reproducible. Policy as code is deterministic — the same input always produces the same admission decision, which can be audited and tested. `evaluateUnit` is a pure function.
+
+**Q: Is harness judging whether a claim is true or false?**
+No. harness judges whether a claim is *supported by the available evidence*. A claim can be factually correct but still be rejected if no evidence in the pool supports it. A claim can be factually wrong but pass if the evidence is misleading. Truth-checking is the retrieval system's job. harness enforces the boundary between what the evidence allows and what the LLM asserted.
+
+**Q: Should I pass the policy to the LLM as part of the prompt?**
+You can, as soft guidance. A policy summary in the prompt helps the LLM propose claims that are more likely to pass the gate, reducing unnecessary retry cycles. But prompt guidance is not enforcement — the LLM can ignore it, partially comply, or comply on surface while violating intent. The harness gate is the only enforcement. Use the policy in two roles:
+- `policy-as-instruction` → simplified summary in the LLM prompt to improve proposal quality
+- `policy-as-enforcement` → full code executed by harness to admit or reject
+
+**Q: When should a conflict be `blocking` vs `informational`?**
+Use `blocking` when the claims are mutually exclusive and surfacing either one unchecked would be unsafe — e.g. "in stock" vs "out of stock" for the same product, or two ETL pipelines reporting different revenue for the same period. The gate force-rejects both and the LLM receives an empty context. Use `informational` when both sides of the conflict are useful to the downstream LLM — e.g. two timestamps that disagree, or two conditions that are both weakly suggested by symptoms. The LLM receives both with `conflictNote` and can surface the discrepancy to the user.
+
+**Q: Why downgrade instead of reject when a claim is over-specific?**
+Reject discards information. Downgrade preserves the claim with a reduced grade and `unsupportedAttributes` flagged. The downstream LLM receives the reduced claim and hedges its language accordingly — "evidence suggests" rather than "confirmed". Use reject only when the claim has no grounding at all (`MISSING_EVIDENCE`) or when the assertion is categorically unsafe regardless of evidence (e.g. treatment recommendations from symptom records).
+
+**Q: What happens when the support pool is empty?**
+Every `proven` claim fails with `MISSING_EVIDENCE`. `derived` claims also fail. Only `suspected` claims (already hedged) pass. This is intentional — an empty pool means retrieval found nothing, and harness cannot distinguish "LLM cited wrong evidence" from "evidence does not exist". The retry mechanism will not help; fix the retrieval layer.
+
+## Policy design guide
+
+### Principles
+
+**Claim strength must match evidence strength.** An `observation` (single log line) cannot support a `root_cause` assertion. Build a strength ladder in your policy and enforce it in `evaluateUnit`.
+
+**Separate generation from verification.** The LLM proposes. harness verifies. Never let the LLM self-certify — a claim with `grade=proven` and `evidenceRefs=[]` is the canonical failure mode harness exists to catch.
+
+**Evidence is a first-class object.** A claim cannot be its own evidence. Every `proven` or `derived` claim must cite at least one `SupportRef` by `sourceId`. The `id` flows to the audit log; the `sourceId` is what `bindSupport` matches against.
+
+**Downgrade before you reject.** If a claim is partially supportable, admit it with a reduced grade and `unsupportedAttributes` flagged. Reject is for claims with zero grounding or categorically unsafe assertions. Information lost at the gate cannot be recovered downstream.
+
+**Surface conflicts, never resolve them.** harness does not pick a winner between contradictory claims. `informational` conflicts annotate both and pass them through. `blocking` conflicts reject both. The downstream LLM or a human decides what to do with the ambiguity.
+
+**retrieval ≠ admission.** Retrieval finds candidate evidence. Admission decides which claims are grounded in that evidence. They are separate steps with separate failure modes. A retrieval miss is not the same as a gate rejection.
+
+### Patterns
+
+| Pattern | Description |
+|---------|-------------|
+| Claim ladder | Define `observation < symptom < hypothesis < root_cause`. Raise the evidence bar at each level. |
+| Evidence composition | Require multiple independent evidence types for high-strength claims (e.g. root cause needs log + metric + k8s event). |
+| Attribute-level gating | Evaluate each asserted attribute separately — presence may be approved while brand and quantity are downgraded. |
+| Safe-action policy | For agentic systems, only admit action claims that are non-destructive (check / inspect / run diagnostics). Reject claims that assert delete / restart / replace without explicit confirmation evidence. |
+| Conflict-first rendering | In `render()`, place `approved_with_conflict` blocks first so the downstream LLM sees the ambiguity before the facts. |
+
+### Anti-patterns
+
+| Anti-pattern | What goes wrong |
+|-------------|-----------------|
+| LLM self-certification | `grade=proven, evidenceRefs=[]` — the LLM asserts facts it invented. Caught by `MISSING_EVIDENCE`. |
+| Policy only in prompt | Prompt guidance is suggestion, not enforcement. The gate must exist in code. |
+| Retrieved = true | Retrieval returning a document does not mean the document supports the claim. `bindSupport` + `evaluateUnit` enforce the connection. |
+| Root cause from single signal | One log line is not enough to assert root cause. Require cross-domain evidence composition. |
+| Discarding downgraded information | Rejecting over-specific claims instead of downgrading loses the valid core. Prefer `OVER_SPECIFIC_*` → downgrade. |
+| Confusing observation with inference | "Log says X" (observation) ≠ "Root cause is Y" (inference). The claim grade and policy rules must reflect the inference step. |
+| harness as reasoner | harness executes policy — it does not reason, interpret, or fill in gaps. If the policy cannot decide, it should downgrade or reject, not guess. |
 
 ## License
 
