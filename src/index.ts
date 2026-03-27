@@ -26,3 +26,13 @@ export type {
   RenderContext,
   HarnessExplanation,
 } from "./types/index.js";
+
+export { FileAuditWriter, createDefaultAuditWriter } from "./audit/audit-log.js";
+export { buildAuditEntry } from "./audit/audit-entry.js";
+
+export {
+  surfaceConflicts,
+  groupConflictsByCode,
+  hasConflicts,
+} from "./conflict/conflict-annotator.js";
+export type { ConflictSurface } from "./conflict/conflict-annotator.js";
