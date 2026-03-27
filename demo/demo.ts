@@ -293,7 +293,7 @@ function printIronLaws(): void {
   console.log("    Proposal<TUnit>             ← typed, schema-validated by LLM API");
   console.log("       |");
   console.log("       v");
-  console.log("    harness.admit(proposal, support)");
+  console.log("    gate.admit(proposal, support)");
   console.log("       |  Gate Step 1: validateStructure()  — structural check");
   console.log("       |  Gate Step 2: bindSupport()        — match units to evidence");
   console.log("       |  Gate Step 3: evaluateUnit()       — semantic evaluation");
@@ -303,7 +303,7 @@ function printIronLaws(): void {
   console.log("    AdmissionResult             ← who passed, who failed, conflicts");
   console.log("       |");
   console.log("       v");
-  console.log("    harness.render(result)      ← Gate Step 5: policy renders admitted units");
+  console.log("    gate.render(result)      ← Gate Step 5: policy renders admitted units");
   console.log("       |");
   console.log("       v");
   console.log("    VerifiedContext             ← semantic structure, NOT user text");
@@ -380,12 +380,12 @@ async function scenario1(): Promise<void> {
     },
   ]);
 
-  const harness = createTrustGate({
+  const gate = createTrustGate({
     policy: createMemoryPolicy(),
     auditWriter: noopAuditWriter(),
   });
 
-  subsep("GATE EXECUTION — harness.admit()");
+  subsep("GATE EXECUTION — gate.admit()");
   console.log();
   console.log("  Step 1 — validateStructure(): 2 units present  → valid");
   console.log("  Step 2 — bindSupport():");
@@ -396,8 +396,8 @@ async function scenario1(): Promise<void> {
   console.log('            claim-2: grade=derived, supportIds=[sup-2]  → approve (OK)');
   console.log("  Step 4 — detectConflicts(): no conflicts detected");
 
-  const result = await harness.admit(proposal, support);
-  const explanation = harness.explain(result);
+  const result = await gate.admit(proposal, support);
+  const explanation = gate.explain(result);
 
   subsep("OUTPUT — AdmissionResult");
   console.log();
@@ -416,9 +416,9 @@ async function scenario1(): Promise<void> {
   label("  rejected", explanation.rejected);
   label("  gateReasonCodes", explanation.gateReasonCodes);
 
-  subsep("RENDER — harness.render() → VerifiedContext");
+  subsep("RENDER — gate.render() → VerifiedContext");
   console.log();
-  const verifiedCtx = harness.render(result);
+  const verifiedCtx = gate.render(result);
   for (const block of verifiedCtx.admittedBlocks) {
     console.log(`    block[${block.sourceId}]:`);
     label("      content", block.content);
@@ -473,12 +473,12 @@ async function scenario2(): Promise<void> {
     },
   ]);
 
-  const harness = createTrustGate({
+  const gate = createTrustGate({
     policy: createMemoryPolicy(),
     auditWriter: noopAuditWriter(),
   });
 
-  subsep("GATE EXECUTION — harness.admit()");
+  subsep("GATE EXECUTION — gate.admit()");
   console.log();
   console.log("  Step 1 — validateStructure(): 1 unit present  → valid");
   console.log("  Step 2 — bindSupport(): evidenceRefs=[]  → supportIds=[]  (nothing matched)");
@@ -488,7 +488,7 @@ async function scenario2(): Promise<void> {
   console.log("            → decision: reject  reasonCode: MISSING_EVIDENCE");
   console.log("  Step 4 — detectConflicts(): skipped (unit already rejected)");
 
-  const result = await harness.admit(proposal, []);
+  const result = await gate.admit(proposal, []);
 
   subsep("OUTPUT — AdmissionResult");
   console.log();
@@ -568,12 +568,12 @@ async function scenario3(): Promise<void> {
     },
   ]);
 
-  const harness = createTrustGate({
+  const gate = createTrustGate({
     policy: createMemoryPolicy(),
     auditWriter: noopAuditWriter(),
   });
 
-  subsep("GATE EXECUTION — harness.admit()");
+  subsep("GATE EXECUTION — gate.admit()");
   console.log();
   console.log("  Step 1 — validateStructure(): 1 unit  → valid");
   console.log("  Step 2 — bindSupport(): evidenceRefs=[obs-001]  → matched sup-1");
@@ -584,7 +584,7 @@ async function scenario3(): Promise<void> {
   console.log("            Rule B fires: claim asserts brand but evidence has none");
   console.log("            → decision: downgrade  reasonCode: OVER_SPECIFIC_BRAND  newGrade: 'derived'");
 
-  const result = await harness.admit(proposal, support);
+  const result = await gate.admit(proposal, support);
   const admitted = result.admittedUnits[0];
 
   subsep("OUTPUT — AdmissionResult");
@@ -598,7 +598,7 @@ async function scenario3(): Promise<void> {
   label("    appliedGrades", admitted.appliedGrades);
   label("    reasonCode", admitted.evaluationResults[0].reasonCode);
 
-  const verifiedCtx = harness.render(result);
+  const verifiedCtx = gate.render(result);
   const block = verifiedCtx.admittedBlocks[0];
 
   console.log();
@@ -699,12 +699,12 @@ async function scenario4(): Promise<void> {
     },
   ]);
 
-  const harness = createTrustGate({
+  const gate = createTrustGate({
     policy: createMemoryPolicy(injectedConflicts),
     auditWriter: noopAuditWriter(),
   });
 
-  subsep("GATE EXECUTION — harness.admit()");
+  subsep("GATE EXECUTION — gate.admit()");
   console.log();
   console.log("  Step 1 — validateStructure(): 2 units  → valid");
   console.log("  Step 2 — bindSupport():");
@@ -718,7 +718,7 @@ async function scenario4(): Promise<void> {
   console.log("            severity=informational (both kept, annotated)");
   console.log("            if severity=blocking → both would be rejected");
 
-  const result = await harness.admit(proposal, support);
+  const result = await gate.admit(proposal, support);
 
   subsep("OUTPUT — AdmissionResult");
   console.log();
@@ -735,7 +735,7 @@ async function scenario4(): Promise<void> {
 
   subsep("RENDER — VerifiedContext with conflict notes");
   console.log();
-  const verifiedCtx = harness.render(result);
+  const verifiedCtx = gate.render(result);
   for (const block of verifiedCtx.admittedBlocks) {
     console.log(`  Block: ${block.sourceId}`);
     label("    content", block.content);
@@ -787,13 +787,13 @@ async function scenario4(): Promise<void> {
     },
   ];
 
-  const harnessBlocking = createTrustGate({
+  const gateBlocking = createTrustGate({
     policy: createMemoryPolicy(blockingConflicts),
     auditWriter: noopAuditWriter(),
   });
 
-  const resultBlocking = await harnessBlocking.admit(proposal, support);
-  const ctxBlocking = harnessBlocking.render(resultBlocking);
+  const resultBlocking = await gateBlocking.admit(proposal, support);
+  const ctxBlocking = gateBlocking.render(resultBlocking);
 
   console.log();
   console.log("  Step 4 — detectConflicts():");
@@ -922,13 +922,13 @@ async function scenario5(): Promise<void> {
     ]);
   };
 
-  const harness = createTrustGate({
+  const gate = createTrustGate({
     policy: createMemoryPolicy(),
     auditWriter: noopAuditWriter(),
     retry: { maxRetries: 3, retryOnDecisions: ["reject"] },
   });
 
-  const result = await harness.admitWithRetry(invoker, support, "What food do I have?");
+  const result = await gate.admitWithRetry(invoker, support, "What food do I have?");
 
   subsep("RetryFeedback that was sent to LLMInvoker");
   console.log();
@@ -1173,7 +1173,7 @@ function printPatternsAndAntiPatterns(): void {
   explain("Passing raw error string to LLM as retry feedback. Loses structure, loses traceability, LLM cannot extract specific unit IDs or reason codes. RetryFeedback is always a typed struct.");
   console.log();
   console.log("  Anti-pattern 5: Bypassing the gate");
-  explain("Passing LLM output directly as trusted context without running harness.admit(). This defeats the entire system. Every Proposal must flow through the gate before reaching the LLM context.");
+  explain("Passing LLM output directly as trusted context without running gate.admit(). This defeats the entire system. Every Proposal must flow through the gate before reaching the LLM context.");
   console.log();
   console.log("  KNOWN LIMITATIONS:");
   console.log();
@@ -1184,7 +1184,7 @@ function printPatternsAndAntiPatterns(): void {
   explain("Retry works when the LLM cited wrong evidence refs. It does not work when the evidence simply does not exist in your system. jingu-trust-gate cannot distinguish between these two cases — MISSING_EVIDENCE looks identical in both.");
   console.log();
   console.log("  Limitation 3: no cross-session state");
-  explain("jingu-trust-gate is stateless per call. It does not remember previous admissions or detect patterns across sessions. Cross-session governance must be implemented outside harness.");
+  explain("jingu-trust-gate is stateless per call. It does not remember previous admissions or detect patterns across sessions. Cross-session governance must be implemented outside the gate.");
   console.log();
   console.log("  Limitation 4: no domain constraint on TUnit");
   explain("jingu-trust-gate does not enforce that TUnit has an id field. If your policy's evaluateUnit returns a mismatched unitId, the audit log will have orphan entries. Your policy is responsible for ID consistency.");
