@@ -1,10 +1,14 @@
 # jingu-trust-gate
 
-AI can propose anything. Only verified results are accepted.
+A deterministic admission layer between your LLM and your system. Every claim an LLM proposes is checked against evidence before it is allowed to affect state or trigger actions.
 
 ```
-AI  →  propose  →  verify  →  accept / reject
+LLM output  →  gate.admit()  →  VerifiedContext  →  your system
 ```
+
+Not a guardrails framework. Not output validation. An evidence-grounded admission boundary — deterministic, zero LLM calls, fully audited.
+
+---
 
 ## Two failure modes that every AI system eventually hits
 
@@ -64,6 +68,32 @@ The gate does not make the model smarter. It makes the system honest about what 
 npm run demo:aha   # the two scenarios above, with pacing
 npm run demo       # full 8-scenario walkthrough
 ```
+
+---
+
+## Where it fits in your stack
+
+```
+Your retrieval system / event source
+            ↓
+      support pool        ← the evidence you have
+            ↓
+       LLM call           ← proposes claims referencing that evidence
+            ↓
+     gate.admit()         ← deterministic, zero LLM, fully audited
+       step 1: validateStructure()  — is the proposal well-formed?
+       step 2: bindSupport()        — which evidence applies to each claim?
+       step 3: evaluateUnit()       — does the claim stay within what evidence supports?
+       step 4: detectConflicts()    — do any claims contradict each other?
+            ↓
+    AdmissionResult       ← every claim labeled: approved / downgraded / rejected
+            ↓
+    VerifiedContext        ← only grounded claims reach downstream
+            ↓
+   Your system / DB / API
+```
+
+All domain logic (what counts as "grounded") lives in your `GatePolicy`. The gate core is a fixed pipeline with zero business logic embedded.
 
 ---
 
