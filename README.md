@@ -1,18 +1,71 @@
 # jingu-trust-gate
 
-**AI can propose anything. Only verified results are accepted.**
+AI can propose anything. Only verified results are accepted.
 
 ```
-AI  →  propose
-           ↓
-        verify
-           ↓
-    accept / reject
+AI  →  propose  →  verify  →  accept / reject
 ```
 
-LLMs are proposal generators, not sources of truth. They produce confident output whether or not it is correct. jingu-trust-gate is the layer that decides which proposals are allowed to become system state — by checking each one against evidence before it is admitted.
+## Two failure modes that every AI system eventually hits
 
-Nothing passes through unless it can be proven. Every decision is audited.
+### 1. Agent does things you never asked for
+
+User says: `"Order more milk."`
+
+Agent proposes:
+
+```
+order_milk              — user asked for this         → should run
+delete_old_list         — agent decided on its own    → should NOT run
+send_notification_email — agent decided on its own    → should NOT run
+```
+
+Without jingu-trust-gate: all three execute.
+
+With jingu-trust-gate:
+
+```
+order_milk              → ACCEPT   (has explicit_request evidence)
+delete_old_list         → REJECT   (INTENT_NOT_ESTABLISHED)
+send_notification_email → REJECT   (INTENT_NOT_ESTABLISHED)
+```
+
+### 2. System remembers things you never said
+
+User says: `"We're running low on milk."`
+
+LLM proposes writing to memory:
+
+```json
+{ "milk_stock": "low", "user_prefers_brand": "Oatly", "weekly_budget": "$50" }
+```
+
+The user never mentioned Oatly. The user never mentioned $50.
+
+Without jingu-trust-gate: all three are stored. The system now treats those guesses as permanent facts — shaping every future recommendation, shopping list, and budget calculation. There is no automatic correction.
+
+With jingu-trust-gate:
+
+```
+milk_stock = "low"           → ACCEPT   (verbatim in user statement)
+user_prefers_brand = "Oatly" → REJECT   (INFERRED_NOT_STATED)
+weekly_budget = "$50"        → REJECT   (INFERRED_NOT_STATED)
+```
+
+State after gate: `{ "milk_stock": "low" }`
+
+The two hallucinated facts are blocked at the boundary. They are never stored. They cannot corrupt future queries.
+
+---
+
+The gate does not make the model smarter. It makes the system honest about what it actually knows.
+
+```
+npm run aha    # run the two scenarios above end-to-end
+npm run demo   # full 8-scenario walkthrough
+```
+
+---
 
 ## Install
 
@@ -22,40 +75,6 @@ npm install jingu-trust-gate
 
 # Python
 pip install jingu-trust-gate
-```
-
-
-## The problem
-
-LLMs do not distinguish between what is known and what is guessed. They generate confident output either way.
-
-This creates the same failure mode across every LLM use case:
-
-| Use case | What the LLM proposes | What can go wrong |
-|---|---|---|
-| RAG / Q&A | Claims about retrieved data | Asserts facts not in your evidence |
-| Agent planning | Next steps to execute | Proposes steps that lack required context |
-| Tool calls | Function calls to make | Calls tools redundantly or without user intent |
-| Action execution | Irreversible actions | Acts without authorization or confirmation |
-
-In each case, the LLM output flows directly into system state with no deterministic check. Once an incorrect output is accepted, it is indistinguishable from a correct one — and there is no reproducible way to audit or debug the failure.
-
-This is not a prompt problem. This is a system boundary problem.
-
-**Without jingu-trust-gate:**
-```
-LLM: "You have exactly 3 apples"     ← grade=proven, evidenceRefs=[]
-→ passes through
-→ user believes it
-→ no audit trail, no way to debug
-```
-
-**With jingu-trust-gate:**
-```
-LLM: "You have exactly 3 apples"     ← grade=proven, evidenceRefs=[]
-→ gate: MISSING_EVIDENCE → rejected
-→ never reaches user context
-→ audit log records the rejection
 ```
 
 ## This is not a guardrails framework
