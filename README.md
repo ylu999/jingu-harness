@@ -307,6 +307,7 @@ With jingu-trust-gate:
 
 ```ts
 import { createTrustGate } from "jingu-trust-gate";
+import { approve, reject } from "jingu-trust-gate/helpers";
 import type { GatePolicy, Proposal, SupportRef, UnitWithSupport,
               UnitEvaluationResult, AdmittedUnit, VerifiedContext,
               StructureValidationResult, RetryFeedback, ConflictAnnotation,
@@ -329,11 +330,10 @@ const policy: GatePolicy<Item> = {
     return { unit, supportIds: matched.map(s => s.id), supportRefs: matched };
   },
 
-  evaluateUnit: ({ unit, supportIds }: UnitWithSupport<Item>): UnitEvaluationResult => ({
-    unitId: unit.id,
-    decision: unit.grade === "proven" && supportIds.length === 0 ? "reject" : "approve",
-    reasonCode: unit.grade === "proven" && supportIds.length === 0 ? "MISSING_EVIDENCE" : "OK",
-  }),
+  evaluateUnit: ({ unit, supportIds }: UnitWithSupport<Item>): UnitEvaluationResult =>
+    unit.grade === "proven" && supportIds.length === 0
+      ? reject(unit.id, "MISSING_EVIDENCE")
+      : approve(unit.id),
 
   // detectConflicts receives UnitWithSupport[] so you can inspect bound evidence per unit
   detectConflicts: (_units: UnitWithSupport<Item>[], _pool: SupportRef[]): ConflictAnnotation[] => [],
@@ -423,27 +423,34 @@ The same mechanism works for any context that needs to constrain what an LLM or 
 Your `bindSupport()` and `evaluateUnit()` filter and check by `sourceType`. For example:
 
 ```ts
+import { approve, reject, downgrade, firstFailing } from "jingu-trust-gate/helpers";
+
 // Tool call gate: reject if no "explicit_request" in support
 evaluateUnit(uws) {
-  const hasIntent = uws.supportRefs.some(s => s.sourceType === "explicit_request");
-  if (!hasIntent) return { decision: "reject", reasonCode: "INTENT_NOT_ESTABLISHED" };
-  ...
+  return firstFailing([
+    !uws.supportRefs.some(s => s.sourceType === "explicit_request")
+      ? reject(uws.unit.id, "INTENT_NOT_ESTABLISHED")
+      : undefined,
+  ]) ?? approve(uws.unit.id);
 }
 
 // Action gate: require "user_confirmation" for high-risk irreversible actions
 evaluateUnit(uws) {
-  if (uws.unit.riskLevel === "high" && !uws.unit.isReversible) {
-    const confirmed = uws.supportRefs.some(s => s.sourceType === "user_confirmation");
-    if (!confirmed) return { decision: "reject", reasonCode: "CONFIRM_REQUIRED" };
-  }
-  ...
+  return firstFailing([
+    uws.unit.riskLevel === "high" && !uws.unit.isReversible &&
+    !uws.supportRefs.some(s => s.sourceType === "user_confirmation")
+      ? reject(uws.unit.id, "CONFIRM_REQUIRED")
+      : undefined,
+  ]) ?? approve(uws.unit.id);
 }
 
 // Agent step gate: reject if required context IDs are not in support pool
 evaluateUnit(uws) {
-  if (uws.unit.grade === "required" && uws.supportIds.length === 0)
-    return { decision: "reject", reasonCode: "MISSING_CONTEXT" };
-  ...
+  return firstFailing([
+    uws.unit.grade === "required" && uws.supportIds.length === 0
+      ? reject(uws.unit.id, "MISSING_CONTEXT")
+      : undefined,
+  ]) ?? approve(uws.unit.id);
 }
 ```
 
@@ -468,6 +475,7 @@ src/retry/        — runWithRetry, RetryFeedback utils
 src/conflict/     — ConflictAnnotation surfacing helpers
 src/renderer/     — BaseRenderer → VerifiedContext
 src/adapters/     — ContextAdapter interface (implementations in examples/)
+src/helpers/      — approve(), reject(), downgrade(), firstFailing() + structure/support helpers
 src/trust-gate.ts — createTrustGate() public API
 
 examples/
@@ -561,6 +569,11 @@ Every `proven` claim fails with `MISSING_EVIDENCE`. `derived` claims also fail. 
 | gate as reasoner | The gate executes policy — it does not reason, interpret, or fill in gaps. If the policy cannot decide, it should downgrade or reject, not guess. |
 
 ## Changelog
+
+### 0.1.10
+- `src/helpers/` module: `approve()`, `reject()`, `downgrade()` outcome builders; `firstFailing()` combinator; `hasSupportType()`, `findSupportByType()` etc. support queries; `emptyProposalErrors()`, `missingIdErrors()`, `missingTextField()` structure helpers; `hintsFeedback()` feedback builder
+- All three agent/tool/action example policies refactored to use helpers — `evaluateUnit` now reads `firstFailing([...checks]) ?? approve(id)` throughout
+- `ARCHITECTURE.md` added: three-layer model, mechanism vs semantics boundary, what helpers must not become
 
 ### 0.1.9
 - Three new example policies: `agent-step-policy.ts` (research agent step gate), `tool-call-policy.ts` (LLM tool call gate), `action-gate-policy.ts` (irreversible action gate)

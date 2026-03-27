@@ -12,6 +12,7 @@
 import assert from "node:assert/strict";
 import { createTrustGate } from "../src/trust-gate.js";
 import { ClaudeContextAdapter, OpenAIContextAdapter, GeminiContextAdapter } from "../examples/adapter-examples.js";
+import { approve, reject, downgrade } from "../src/helpers/index.js";
 import type { GatePolicy } from "../src/types/policy.js";
 import type { Proposal } from "../src/types/proposal.js";
 import type { SupportRef, UnitWithSupport } from "../src/types/support.js";
@@ -143,12 +144,7 @@ class MemoryPolicy implements GatePolicy<MemoryClaim> {
 
     // Rule A: proven claim must have at least one evidence reference
     if (unit.grade === "proven" && supportIds.length === 0) {
-      return {
-        kind: "unit",
-        unitId: unit.id,
-        decision: "reject",
-        reasonCode: "MISSING_EVIDENCE",
-      };
+      return reject(unit.id, "MISSING_EVIDENCE");
     }
 
     // Rule B: claim asserts a specific brand but evidence has no brand attribute
@@ -158,22 +154,11 @@ class MemoryPolicy implements GatePolicy<MemoryClaim> {
         (s) => s.attributes?.brand !== undefined
       );
       if (!evidenceHasBrand) {
-        return {
-          kind: "unit",
-          unitId: unit.id,
-          decision: "downgrade",
-          reasonCode: "OVER_SPECIFIC_BRAND",
-          newGrade: "derived",
-        };
+        return downgrade(unit.id, "OVER_SPECIFIC_BRAND", "derived");
       }
     }
 
-    return {
-      kind: "unit",
-      unitId: unit.id,
-      decision: "approve",
-      reasonCode: "OK",
-    };
+    return approve(unit.id);
   }
 
   // Gate Step 4: cross-unit conflict detection
