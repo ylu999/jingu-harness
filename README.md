@@ -317,9 +317,35 @@ const policy: GatePolicy<Item> = {
 
 const gate = createTrustGate({ policy });
 
+const supportPool: SupportRef[] = [
+  { id: "ref-1", sourceId: "doc-1", sourceType: "observation", attributes: {} },
+];
+const proposal: Proposal<Item> = {
+  id: "prop-1", kind: "response",
+  units: [
+    { id: "u1", text: "Fact with evidence", grade: "proven" },
+    { id: "u2", text: "Hallucinated fact",  grade: "proven" },
+  ],
+};
+
 const result  = await gate.admit(proposal, supportPool);
 const context = gate.render(result);   // VerifiedContext → pass to LLM API
 const summary = gate.explain(result);  // { approved, rejected, conflicts, ... }
+
+// What came through:
+for (const block of context.admittedBlocks) {
+  console.log(`admitted: "${block.sourceId}"  content="${block.content}"`);
+}
+// admitted: "u1"  content="Fact with evidence"
+
+// What was blocked (and why):
+for (const u of result.rejectedUnits) {
+  console.log(`rejected: "${u.unitId}"  reason="${u.evaluationResults[0]?.reasonCode}"`);
+}
+// rejected: "u2"  reason="MISSING_EVIDENCE"
+
+console.log(`approved=${summary.approved}, rejected=${summary.rejected}`);
+// approved=1, rejected=1
 ```
 
 ## GatePolicy interface
@@ -363,7 +389,7 @@ class MyAdapter implements ContextAdapter<MyWireFormat> {
 }
 ```
 
-Reference implementations for Claude, OpenAI, and Gemini are in [`examples/adapter-examples.ts`](examples/adapter-examples.ts). Copy and adapt as needed — they are not part of the published package.
+Reference implementations for Claude, OpenAI, and Gemini are in [`examples/integration/adapter-examples.ts`](examples/integration/adapter-examples.ts). Copy and adapt as needed — they are not part of the published package.
 
 ## SupportRef — not just evidence
 
