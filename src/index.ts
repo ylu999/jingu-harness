@@ -55,3 +55,10 @@ export {
   needsRetry,
   buildDefaultRetryFeedback,
 } from "./retry/retry-feedback.js";
+
+// Adapters — convert VerifiedContext to LLM API wire format
+export type { ContextAdapter } from "./adapters/context-adapter.js";
+export {
+  ClaudeContextAdapter,
+} from "./adapters/claude-adapter.js";
+export type { ClaudeSearchResultBlock, ClaudeAdapterOptions } from "./adapters/claude-adapter.js";

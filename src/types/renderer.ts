@@ -3,9 +3,10 @@
 // This maps to Claude API's search_result blocks or tool_result content.
 export type VerifiedBlock = {
   sourceId: string; // maps to SupportRef.sourceId
-  content: string; // verified content to pass to Claude
+  content: string; // verified content — policy-determined, not LLM raw text
   grade?: string; // downgraded grade (Claude uses this as context)
   conflictNote?: string; // present when status === "approved_with_conflict"
+  unsupportedAttributes?: string[]; // attributes the claim made but evidence does not support
 };
 
 export type VerifiedContext = {

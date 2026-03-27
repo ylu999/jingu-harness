@@ -10,6 +10,7 @@
 
 import assert from "node:assert/strict";
 import { createHarness } from "../src/harness.js";
+import { ClaudeContextAdapter } from "../src/adapters/claude-adapter.js";
 import type { HarnessPolicy } from "../src/types/policy.js";
 import type { Proposal } from "../src/types/proposal.js";
 import type { SupportRef, UnitWithSupport } from "../src/types/support.js";
@@ -491,6 +492,7 @@ Gate: ITEM_CONFLICT → both admitted with status=approved_with_conflict
       unitIds: ["claim-1", "claim-2"],
       conflictCode: "ITEM_CONFLICT",
       sources: ["obs-1", "obs-2"],
+      severity: "informational",
       description: "claim-1 and claim-2 contradict each other about the same item",
     },
   ];
@@ -572,13 +574,26 @@ Key design:
 
 Attempt 1: claim "You have 5 cans" grade=proven, no evidence → REJECTED
            RetryFeedback: { reasonCode: "MISSING_EVIDENCE", unitId: "claim-1" }
-Attempt 2: claim "You probably have cans" grade=derived → APPROVED
+Attempt 2: LLM provides evidence this time → grade=proven, evidenceRef=obs-pantry → APPROVED
+
+Key: the fix is supplying evidence, not just softening language.
+Lowering grade without evidence is not the correct retry behavior.
 `);
 
   let capturedFeedback: RetryFeedback | undefined;
   let invokerCallCount = 0;
 
-  const support: SupportRef[] = []; // no evidence pool needed for attempt 2 (derived)
+  // Attempt 2 will reference this support entry
+  const support: SupportRef[] = [
+    {
+      id: "sup-pantry",
+      sourceType: "observation",
+      sourceId: "obs-pantry",
+      confidence: 0.7,
+      attributes: { item: "canned-goods", location: "pantry" },
+      retrievedAt: "2024-01-10T12:00:00Z",
+    },
+  ];
 
   // Mock LLM invoker: first call returns a bad proposal, second returns a good one
   const invoker = async (
@@ -592,7 +607,7 @@ Attempt 2: claim "You probably have cans" grade=derived → APPROVED
     }
 
     if (invokerCallCount === 1) {
-      // First attempt: LLM makes a hallucinated proven claim with no evidence
+      // First attempt: LLM makes a proven claim with no evidence reference
       return makeProposal([
         {
           id: "claim-1",
@@ -604,14 +619,14 @@ Attempt 2: claim "You probably have cans" grade=derived → APPROVED
       ]);
     }
 
-    // Second attempt: LLM corrects grade to derived, no evidence needed
+    // Second attempt: LLM corrects by referencing the actual evidence it should have used
     return makeProposal([
       {
         id: "claim-1",
-        text: "You probably have cans of soup",
-        grade: "derived",
+        text: "You have canned goods in the pantry",
+        grade: "proven",
         attributes: {},
-        evidenceRefs: [], // derived grade doesn't require evidence
+        evidenceRefs: ["obs-pantry"], // now backed by evidence
       },
     ]);
   };
@@ -639,7 +654,7 @@ Attempt 2: claim "You probably have cans" grade=derived → APPROVED
 
   console.log("");
   console.log("  Attempt 2 → APPROVED:");
-  console.log(`    claim: "You probably have cans of soup"  grade=derived`);
+  console.log(`    claim: "You have canned goods in the pantry"  grade=proven  evidenceRefs=["obs-pantry"]`);
   console.log(`    gate verdict: OK → approve`);
   console.log("");
   console.log(`  retryAttempts: ${result.retryAttempts}`);
@@ -679,12 +694,70 @@ What harness guarantees:
   ✓ specificity cannot exceed evidence   (Scenario 3)
   ✓ conflicts are surfaced, not hidden   (Scenario 4)
   ✓ semantic retry loop with structured feedback  (Scenario 5)
+  ✓ retry fix = supply evidence, not just soften language (Scenario 5)
 
 What harness does NOT do:
   ✗ generate user-facing text (that's Claude's job)
   ✗ call LLMs in gate evaluation
   ✗ resolve conflicts (it surfaces them)
 `);
+
+  // ---------------------------------------------------------------------------
+  // Bonus: show ClaudeContextAdapter converting VerifiedContext → API blocks
+  // ---------------------------------------------------------------------------
+  console.log("━".repeat(50));
+  console.log("Bonus: ClaudeContextAdapter");
+  console.log("━".repeat(50));
+  console.log(`
+harness.render() outputs VerifiedContext (abstract semantic structure).
+ClaudeContextAdapter converts it to Claude API search_result blocks.
+Pass these blocks directly as tool_result content or user message content.
+`);
+
+  const exampleContext = {
+    admittedBlocks: [
+      {
+        sourceId: "claim-1",
+        content: "You have canned goods in the pantry",
+      },
+      {
+        sourceId: "claim-2",
+        content: "You have a drink",
+        grade: "derived",
+        unsupportedAttributes: ["brand"],
+      },
+      {
+        sourceId: "claim-3",
+        content: "You have milk",
+        conflictNote: "contradicts claim-4 (obs-2 says no milk)",
+      },
+    ],
+    summary: { admitted: 3, rejected: 0, conflicts: 1 },
+  };
+
+  const adapter = new ClaudeContextAdapter({ citations: true });
+  const blocks = adapter.adapt(exampleContext);
+
+  console.log("  Input  → VerifiedContext with 3 blocks");
+  console.log("  Output → Claude API search_result blocks:\n");
+  for (const block of blocks) {
+    console.log(`  [${block.source}]`);
+    console.log(`    type    : ${block.type}`);
+    console.log(`    title   : ${block.title}`);
+    console.log(`    content : "${block.content[0].text}"`);
+    console.log(`    citations enabled: ${block.citations?.enabled}`);
+    console.log();
+  }
+
+  assert.equal(blocks.length, 3);
+  assert.equal(blocks[0].type, "search_result");
+  assert.ok(blocks[1].content[0].text.includes("[Evidence grade: derived]"));
+  assert.ok(blocks[1].content[0].text.includes("[Not supported by evidence: brand]"));
+  assert.ok(blocks[2].content[0].text.includes("[Conflict:"));
+  console.log("  ✓ all 3 blocks converted correctly");
+  console.log("  ✓ grade caveat appended to downgraded block");
+  console.log("  ✓ unsupportedAttributes noted");
+  console.log("  ✓ conflict note surfaced");
 }
 
 // ---------------------------------------------------------------------------

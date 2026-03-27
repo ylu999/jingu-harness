@@ -29,6 +29,7 @@ export type ConflictAnnotation = {
   unitIds: string[];
   conflictCode: string; // e.g. "TEMPORAL_CONFLICT", "ATTRIBUTE_CONFLICT"
   sources: string[]; // SupportRef IDs involved
+  severity: "informational" | "blocking";
   description?: string;
 };
 

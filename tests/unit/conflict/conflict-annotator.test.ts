@@ -30,9 +30,10 @@ function makeAnnotation(
   unitIds: string[],
   conflictCode: string,
   sources: string[],
-  description?: string
+  description?: string,
+  severity: ConflictAnnotation["severity"] = "informational"
 ): ConflictAnnotation {
-  return { unitIds, conflictCode, sources, description };
+  return { unitIds, conflictCode, sources, severity, description };
 }
 
 // ---------------------------------------------------------------------------

@@ -134,6 +134,7 @@ describe("GateRunner", () => {
         unitIds: ["u1"],
         conflictCode: "TEMPORAL_CONFLICT",
         sources: ["s1"],
+        severity: "informational",
         description: "test conflict",
       },
     ];
@@ -159,7 +160,7 @@ describe("GateRunner", () => {
     // We use two separate GateRunner calls to simulate mixing, but here
     // we test a realistic scenario: conflict on u1, reject on u2, approve on u3
     const conflicts: ConflictAnnotation[] = [
-      { unitIds: ["u1"], conflictCode: "ATTR_CONFLICT", sources: [] },
+      { unitIds: ["u1"], conflictCode: "ATTR_CONFLICT", sources: [], severity: "informational" },
     ];
     // We need a policy that returns different decisions per unit
     let callCount = 0;

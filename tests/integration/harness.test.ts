@@ -141,6 +141,7 @@ describe("createHarness integration", () => {
         unitIds: ["u1"],
         conflictCode: "TEMPORAL_CONFLICT",
         sources: ["s1"],
+        severity: "informational",
         description: "timestamp mismatch",
       },
     ];
@@ -187,6 +188,7 @@ describe("createHarness integration", () => {
         unitIds: ["u1"],
         conflictCode: "ATTR_CONFLICT",
         sources: ["s1"],
+        severity: "informational",
         description: "attribute mismatch",
       },
     ];
