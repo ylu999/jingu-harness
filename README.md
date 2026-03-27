@@ -98,6 +98,15 @@ Your retrieval system
 | `rejected` | No evidence, or structure invalid | Blocked — never reaches LLM context |
 | `approved_with_conflict` | Claim has evidence but contradicts another claim | Admitted with conflict annotation |
 
+`approved_with_conflict` only occurs when conflict severity is `"informational"`. When severity is `"blocking"`, both claims are force-rejected — `admittedBlocks` is empty and the downstream LLM receives no claims, only the `instructions` field.
+
+```
+informational conflict:  both claims admitted → LLM receives both with conflictNote → LLM surfaces contradiction to user
+blocking conflict:       both claims rejected → LLM receives empty context → LLM tells user data is inconsistent
+```
+
+Which severity to use is a policy decision. Use `informational` when both sides of a conflict are useful to the downstream LLM (e.g. two timestamps that disagree — show both). Use `blocking` when the claims are mutually exclusive and surfacing either one unchecked would be unsafe (e.g. "in stock" vs "out of stock" for the same product).
+
 ## Evidence support vs truth correctness
 
 harness does not determine whether a claim is true or false.

@@ -765,6 +765,74 @@ async function scenario4(): Promise<void> {
   pass("conflictAnnotations[0].conflictCode === 'ITEM_CONFLICT'");
   pass("conflictAnnotations[0].severity === 'informational'");
   pass("VerifiedContext: both blocks have conflictNote");
+
+  // ── Part B: blocking conflict ─────────────────────────────────────────────
+  // severity=blocking is a different outcome: both claims are force-rejected.
+  // admittedBlocks is empty. The downstream LLM receives nothing — it can only
+  // tell the user the data is inconsistent.
+
+  subsep("Part B — severity=blocking: both claims force-rejected");
+  console.log();
+  explain("Same two claims. Same evidence. But now the conflict is severity=blocking — the claims are mutually exclusive in a way that makes it unsafe to surface either one. Example: two inventory records for the same product disagree on whether it is in stock.");
+  console.log();
+  console.log("  Injected conflict: ITEM_CONFLICT  severity=blocking");
+
+  const blockingConflicts: ConflictAnnotation[] = [
+    {
+      unitIds: ["claim-1", "claim-2"],
+      conflictCode: "ITEM_CONFLICT",
+      sources: ["obs-1", "obs-2"],
+      severity: "blocking",
+      description: "claim-1 and claim-2 are mutually exclusive — cannot surface either",
+    },
+  ];
+
+  const harnessBlocking = createHarness({
+    policy: createMemoryPolicy(blockingConflicts),
+    auditWriter: noopAuditWriter(),
+  });
+
+  const resultBlocking = await harnessBlocking.admit(proposal, support);
+  const ctxBlocking = harnessBlocking.render(resultBlocking);
+
+  console.log();
+  console.log("  Step 4 — detectConflicts():");
+  console.log("            ITEM_CONFLICT detected: claim-1 ↔ claim-2");
+  console.log("            severity=blocking → both force-rejected as BLOCKING_CONFLICT");
+  console.log();
+
+  subsep("OUTPUT — blocking conflict result");
+  console.log();
+  label("admittedUnits.length", resultBlocking.admittedUnits.length);
+  label("rejectedUnits.length", resultBlocking.rejectedUnits.length);
+  label("hasConflicts", resultBlocking.hasConflicts);
+  console.log();
+  for (const u of resultBlocking.rejectedUnits) {
+    console.log(`  Unit: ${u.unitId}`);
+    label("    status", u.status);
+    label("    reasonCode", u.evaluationResults[0]?.reasonCode);
+  }
+  console.log();
+  label("admittedBlocks.length", ctxBlocking.admittedBlocks.length);
+  console.log();
+  explain("admittedBlocks is empty. The downstream LLM receives no claims — only the instructions field. It can tell the user: 'Stock status is inconsistent across records. Please check the product page directly.' It does not guess.");
+  console.log();
+  explain("LIMITATION: harness cannot resolve the conflict. It surfaces the problem and stops. A human or a dedicated reconciliation step must decide which record is authoritative.");
+
+  assert.equal(resultBlocking.admittedUnits.length, 0);
+  assert.equal(resultBlocking.rejectedUnits.length, 2);
+  assert.equal(resultBlocking.hasConflicts, true);
+  for (const u of resultBlocking.rejectedUnits) {
+    assert.equal(u.status, "rejected");
+    assert.equal(u.evaluationResults[0]?.reasonCode, "BLOCKING_CONFLICT");
+  }
+  assert.equal(ctxBlocking.admittedBlocks.length, 0);
+
+  console.log();
+  pass("admittedUnits.length === 0 (nothing admitted past the gate)");
+  pass("rejectedUnits.length === 2 (both force-rejected)");
+  pass("reasonCode === 'BLOCKING_CONFLICT' on both");
+  pass("admittedBlocks.length === 0 (LLM receives empty context)");
 }
 
 // ===========================================================================
@@ -1144,7 +1212,7 @@ async function main(): Promise<void> {
   console.log("    1. Happy Path               — zero friction, full pipeline printed");
   console.log("    2. Missing Evidence         — hallucination caught at gate");
   console.log("    3. Over-Specificity         — precision calibrated, not rejected");
-  console.log("    4. Conflict Detection       — truth surfaced, not hidden");
+  console.log("    4. Conflict Detection       — informational: both surfaced with notes; blocking: both force-rejected, LLM gets empty context");
   console.log("    5. Semantic Retry Loop      — evidence-driven correction, typed feedback");
   console.log("    6. All Three Adapters       — same VerifiedContext, Claude + OpenAI + Gemini");
   console.log();
