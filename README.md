@@ -1,63 +1,49 @@
 # jingu-harness
 
-A generic proposal-governance framework.
-After an LLM produces a Proposal, the harness decides which units are admitted,
-retries on semantic rejection, and audits every decision — without calling LLMs.
+**jingu-harness is a deterministic admission control layer for LLM-generated content.**
 
-## The problem
-
-Claude API's `output_config.format` with `strict: true` guarantees that LLM output is
-syntactically valid against a schema. It does not guarantee semantic correctness: a unit
-can be schema-valid yet lack evidence, exceed its permitted scope, or contradict another
-unit in the same proposal. jingu-harness fills this gap with a fully programmatic gate
-layer that runs after schema validation and before any downstream consumption.
+LLMs produce confident outputs that may be unsupported by evidence. Standard RAG pipelines trust this output directly. jingu-harness enforces that only evidence-backed, scope-safe, and conflict-annotated content enters your trusted context.
 
 ## Pipeline
 
 ```
-LLM (output_config.format + strict:true)
-  -> Proposal<TUnit>           schema-valid, syntactically correct
-
-GateRunner                    100% programmatic, zero LLM calls
-  |-- validateStructure()     proposal-level structural check
-  |-- bindSupport()           bind SupportRef[] to each unit
-  |-- evaluateUnit() x N      semantic gate per unit
-  +-- detectConflicts()       cross-unit conflict detection
-
-AdmissionResult<TUnit>
-  |-- approved
-  |-- downgraded              grade adjusted, still admitted
-  |-- approved_with_conflict  admitted but conflict surfaced
-  +-- rejected
-
-render() -> VerifiedContext    input for next Claude API call
-                               NOT final user text -- Claude generates that
+LLM output (Proposal)
+        ↓
+  Gate Engine          ← 4 steps, zero LLM, pure code
+  1. validateStructure
+  2. bindSupport
+  3. evaluateUnit
+  4. detectConflicts
+        ↓
+  AdmissionResult      ← approved / downgraded / rejected / approved_with_conflict
+        ↓
+  harness.render()
+        ↓
+  VerifiedContext       ← semantic structure, not user text
+        ↓
+  Adapter              ← ClaudeAdapter / OpenAIAdapter / GeminiAdapter
+        ↓
+  LLM API call         ← Claude / OpenAI / Gemini generates final response
 ```
 
-## Boundary with Claude API
+## Claude API boundary
 
-```
-Claude API guarantees:  syntactic correctness
-                        (output_config.format, strict:true)
+| Layer | Guarantees |
+|-------|-----------|
+| Claude `output_config.format + strict:true` | **Syntactic** correctness — schema-valid output |
+| jingu-harness | **Semantic** correctness — evidence-grounded, scope-safe, conflict-annotated |
 
-jingu-harness guarantees:  semantic correctness
-  - evidence-grounded   does this unit have a SupportRef?
-  - scope-safe          is this a response unit or a mutation sneaking in?
-  - conflict-annotated  do two units contradict each other?
-
-harness render() -> VerifiedContext -> next Claude API call -> user text
-
-harness does NOT generate user-facing text.
-Claude does the language generation. harness controls what Claude is allowed to say.
-```
+- `harness.render()` outputs `VerifiedContext` — this is input to the Claude API, **not** final user text
+- Claude does the language generation; harness controls what Claude is allowed to say
+- `RetryFeedback` flows back as `tool_result + is_error:true` using Claude's built-in retry mechanism
 
 ## Quick start
 
 ```ts
-import { createHarness } from "jingu-harness";
+import { createHarness, ClaudeContextAdapter } from "jingu-harness";
 import type { HarnessPolicy } from "jingu-harness";
 
-type Item = { id: string; text: string; grade: "proven" | "derived" | "unknown" };
+type Item = { id: string; text: string; grade: "proven" | "derived" };
 
 const policy: HarnessPolicy<Item> = {
   validateStructure: (proposal) => ({
@@ -67,24 +53,18 @@ const policy: HarnessPolicy<Item> = {
       ? [{ field: "units", reasonCode: "EMPTY_PROPOSAL" }]
       : [],
   }),
-
   bindSupport: (unit, pool) => ({
     unit,
     supportIds: pool.filter(s => s.sourceId === unit.id).map(s => s.id),
   }),
-
   evaluateUnit: ({ unit, supportIds }) => ({
     kind: "unit",
     unitId: unit.id,
     decision: unit.grade === "proven" && supportIds.length === 0 ? "reject" : "approve",
-    reasonCode: unit.grade === "proven" && supportIds.length === 0
-      ? "MISSING_EVIDENCE"
-      : "OK",
+    reasonCode: unit.grade === "proven" && supportIds.length === 0 ? "MISSING_EVIDENCE" : "OK",
   }),
-
   detectConflicts: () => [],
-
-  render: (admittedUnits) => ({
+  render: (admittedUnits, _support, _ctx) => ({
     admittedBlocks: admittedUnits.map(u => ({
       sourceId: u.unitId,
       content: (u.unit as Item).text,
@@ -92,8 +72,7 @@ const policy: HarnessPolicy<Item> = {
     })),
     summary: { admitted: admittedUnits.length, rejected: 0, conflicts: 0 },
   }),
-
-  buildRetryFeedback: (results) => ({
+  buildRetryFeedback: (results, _ctx) => ({
     summary: `${results.length} unit(s) failed`,
     errors: results.map(r => ({ unitId: r.unitId, reasonCode: r.reasonCode })),
   }),
@@ -102,39 +81,79 @@ const policy: HarnessPolicy<Item> = {
 const harness = createHarness({ policy });
 
 const result  = await harness.admit(proposal, supportPool);
-const context = harness.render(result);   // -> VerifiedContext for Claude API
-const summary = harness.explain(result);  // -> { approved, rejected, conflicts, ... }
+const context = harness.render(result);             // VerifiedContext → pass to Claude API
+const summary = harness.explain(result);            // { approved, rejected, conflicts, ... }
+
+// Convert to Claude API wire format
+const blocks  = new ClaudeContextAdapter().adapt(context);
 ```
 
 ## HarnessPolicy interface
 
-Callers implement all six methods. None of them may call an LLM.
+Implement all six methods. None may call an LLM.
 
-| Method | What it does | Calls LLM? |
-|---|---|---|
-| `validateStructure()` | Check Proposal shape | No |
-| `bindSupport()` | Assign SupportRefs to each unit | No |
-| `evaluateUnit()` | Per-unit semantic gate | No |
-| `detectConflicts()` | Cross-unit conflict check | No |
-| `render()` | Admitted units -> VerifiedContext | No |
-| `buildRetryFeedback()` | Gate errors -> structured feedback for LLMInvoker | No |
+| Method | Input | Output | Zero LLM? |
+|--------|-------|--------|-----------|
+| `validateStructure` | `Proposal<TUnit>` | `StructureValidationResult` | yes |
+| `bindSupport` | `unit + SupportRef[]` | `UnitWithSupport<TUnit>` | yes |
+| `evaluateUnit` | `UnitWithSupport<TUnit>` | `UnitEvaluationResult` | yes |
+| `detectConflicts` | `units + SupportRef[]` | `ConflictAnnotation[]` | yes |
+| `render` | `AdmittedUnit<TUnit>[] + SupportRef[]` | `VerifiedContext` | yes |
+| `buildRetryFeedback` | `UnitEvaluationResult[]` | `RetryFeedback` | yes |
+
+## Adapters
+
+Each adapter converts `VerifiedContext` to the wire format expected by a specific LLM API.
+
+```ts
+// Claude API — search_result blocks with optional citations
+const blocks = new ClaudeContextAdapter({ citations: true }).adapt(verifiedCtx);
+// blocks: ClaudeSearchResultBlock[]  (type: "search_result")
+
+// OpenAI — tool result or user message
+const msg = new OpenAIContextAdapter({ mode: "tool", toolCallId: call.id }).adapt(verifiedCtx);
+// msg: OpenAIChatMessage  (role: "tool" | "user")
+
+// Gemini — Content with parts array
+const content = new GeminiContextAdapter({ role: "user" }).adapt(verifiedCtx);
+// content: GeminiContent  (role: "user" | "function", parts: GeminiTextPart[])
+```
+
+All three adapters inline grade caveats, unsupported attributes, and conflict notes into the
+content text so the downstream model sees them as contextual constraints.
+
+## UnitStatus
+
+| Status | Meaning |
+|--------|---------|
+| `approved` | Claim backed by evidence, passes all gates |
+| `downgraded` | Admitted but with reduced grade (e.g. `proven` → `derived`) |
+| `rejected` | Not admitted — missing evidence or structure invalid |
+| `approved_with_conflict` | Admitted but conflicts with another unit |
+
+## Three iron laws
+
+1. **Gate Engine: zero LLM calls** — all gates are code, not prompts; deterministic and auditable
+2. **Policy is injected** — harness core carries no business semantics; all domain logic lives in `HarnessPolicy`
+3. **Every admission decision is written to audit log** — append-only JSONL at `.jingu-harness/audit.jsonl`
 
 ## Module structure
 
-| Path | Purpose |
-|---|---|
-| `src/types/` | All type definitions (Proposal, SupportRef, GateResult, AdmissionResult, ...) |
-| `src/gate/` | GateRunner -- fixed 4-step pipeline, zero LLM |
-| `src/audit/` | FileAuditWriter -- append-only JSONL audit log |
-| `src/retry/` | runWithRetry -- semantic retry loop |
-| `src/conflict/` | surfaceConflicts, groupConflictsByCode helpers |
-| `src/renderer/` | BaseRenderer -- default VerifiedContext builder |
-| `src/harness.ts` | createHarness() factory, explainResult() |
-
-## Three laws
-
 ```
-1. Gate Engine: zero LLM -- all gates are code, not prompts
-2. Policy is injected: harness core carries no business semantics
-3. Every admission decision is written to audit log
+src/types/       — core type definitions (Proposal, SupportRef, AdmissionResult, ...)
+src/gate/        — GateRunner (4-step pipeline, zero LLM)
+src/audit/       — FileAuditWriter, audit entry builder
+src/retry/       — runWithRetry, RetryFeedback utils
+src/conflict/    — ConflictAnnotation surfacing helpers
+src/renderer/    — BaseRenderer → VerifiedContext
+src/adapters/    — ClaudeContextAdapter, OpenAIContextAdapter, GeminiContextAdapter
+src/harness.ts   — createHarness() public API
+```
+
+## Install and run
+
+```bash
+npm install
+npm test     # 70 tests
+npm run demo # narrative demo with 6 scenarios
 ```
