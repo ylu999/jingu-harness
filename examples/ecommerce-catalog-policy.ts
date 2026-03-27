@@ -1,9 +1,9 @@
 /**
- * E-commerce catalog chatbot — product & inventory query policy for jingu-harness.
+ * E-commerce catalog chatbot — product & inventory query policy for jingu-trust-gate.
  *
  * Use case: a customer asks "Does this Bluetooth headphone support noise cancellation?"
  * or "How many units are in stock?". The RAG pipeline retrieves product records as
- * evidence. The LLM proposes structured claims. jingu-harness admits only claims
+ * evidence. The LLM proposes structured claims. jingu-trust-gate admits only claims
  * that stay within what the catalog data actually supports.
  *
  * Domain types

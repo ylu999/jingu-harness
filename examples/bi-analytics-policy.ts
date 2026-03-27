@@ -1,9 +1,9 @@
 /**
- * BI analytics assistant — business intelligence query policy for jingu-harness.
+ * BI analytics assistant — business intelligence query policy for jingu-trust-gate.
  *
  * Use case: a business analyst asks "How much did revenue grow last month?" or
  * "Which region performed best in Q3?". The pipeline retrieves metric records
- * from a data warehouse. The LLM proposes structured claims. jingu-harness
+ * from a data warehouse. The LLM proposes structured claims. jingu-trust-gate
  * admits only claims where the math and comparisons are grounded in the actual
  * retrieved numbers — preventing the LLM from inventing percentages, cherry-
  * picking periods, or asserting trends that the data does not support.

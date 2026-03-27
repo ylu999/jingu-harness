@@ -1,6 +1,6 @@
-# jingu-harness
+# jingu-trust-gate
 
-**LLM output is untrusted input. jingu-harness turns it into verified system state.**
+**LLM output is untrusted input. jingu-trust-gate decides what is allowed to become trusted system state.**
 
 It inserts a deterministic, auditable gate between LLM output and your trusted context. Only claims that are provably supported by evidence are allowed through. Everything else is rejected, downgraded, or annotated — and every decision is written to an audit log.
 
@@ -38,7 +38,7 @@ LLM: "You have exactly 3 apples"     ← grade=proven, evidenceRefs=[]
 
 Guardrails frameworks (NeMo Guardrails, Guardrails AI) check whether LLM output is **safe or well-formed**. They block toxic content, enforce schemas, detect PII. That is a different problem.
 
-jingu-harness checks whether each **claim is actually supported by your evidence**. It does not care whether output is polite or syntactically valid. It cares whether what the LLM asserts can be proven from the data you have.
+jingu-trust-gate checks whether each **claim is actually supported by your evidence**. It does not care whether output is polite or syntactically valid. It cares whether what the LLM asserts can be proven from the data you have.
 
 | System | What it checks | Mechanism | Grain |
 |--------|---------------|-----------|-------|
@@ -46,7 +46,7 @@ jingu-harness checks whether each **claim is actually supported by your evidence
 | NeMo Guardrails | Does the bot stay on-topic? | policy rules | turn-level |
 | RAG / grounding | Did retrieval find relevant docs? | vector similarity | document-level |
 | DeepEval | How often does the model hallucinate? | offline scoring | benchmark-level |
-| **jingu-harness** | **Is each claim supported by your evidence?** | **deterministic gate, zero LLM** | **claim-level** |
+| **jingu-trust-gate** | **Is each claim supported by your evidence?** | **deterministic gate, zero LLM** | **claim-level** |
 
 To our knowledge, existing systems validate outputs, evaluate models, or retrieve evidence — but do not provide a deterministic admission boundary that enforces what claims are allowed to be treated as true at runtime.
 
@@ -127,7 +127,7 @@ This design is intentional. The same harness instance works across domains becau
 
 2. **Policy is injected** — harness core contains zero business logic. Your domain rules live entirely in `HarnessPolicy`. The same harness instance works for product search, medical records, or financial data — the policy changes, the gate does not.
 
-3. **Every admission decision is written to audit log** — append-only JSONL at `.jingu-harness/audit.jsonl`. Every claim's fate is on record, linkable by `auditId`.
+3. **Every admission decision is written to audit log** — append-only JSONL at `.jingu-trust-gate/audit.jsonl`. Every claim's fate is on record, linkable by `auditId`.
 
 ## When to use / when NOT to use
 
@@ -246,8 +246,8 @@ With harness:
 ## Quick start
 
 ```ts
-import { createHarness, ClaudeContextAdapter } from "jingu-harness";
-import type { HarnessPolicy } from "jingu-harness";
+import { createHarness, ClaudeContextAdapter } from "jingu-trust-gate";
+import type { HarnessPolicy } from "jingu-trust-gate";
 
 type Item = { id: string; text: string; grade: "proven" | "derived" };
 

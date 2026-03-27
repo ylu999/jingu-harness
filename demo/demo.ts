@@ -1,5 +1,5 @@
 /**
- * jingu-harness narrative demo
+ * jingu-trust-gate narrative demo
  *
  * This demo IS the documentation. Read the terminal output and you will
  * understand the entire system — no external docs needed.

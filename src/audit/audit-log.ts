@@ -14,7 +14,7 @@ export class FileAuditWriter implements AuditWriter {
   }
 }
 
-// Default path: .jingu-harness/audit.jsonl relative to cwd
+// Default path: .jingu-trust-gate/audit.jsonl relative to cwd
 export function createDefaultAuditWriter(): FileAuditWriter {
-  return new FileAuditWriter(".jingu-harness/audit.jsonl");
+  return new FileAuditWriter(".jingu-trust-gate/audit.jsonl");
 }

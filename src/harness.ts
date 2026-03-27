@@ -16,7 +16,7 @@ import type { LLMInvoker, RetryConfig } from "./types/retry.js";
 
 export type HarnessConfig<TUnit> = {
   policy: HarnessPolicy<TUnit>;
-  auditWriter?: AuditWriter; // default: FileAuditWriter at .jingu-harness/audit.jsonl
+  auditWriter?: AuditWriter; // default: FileAuditWriter at .jingu-trust-gate/audit.jsonl
   retry?: RetryConfig;
   // content extractor for BaseRenderer — how to turn TUnit into text for Claude
   extractContent?: (unit: TUnit, support: SupportRef[]) => string;

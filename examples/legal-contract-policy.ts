@@ -1,9 +1,9 @@
 /**
- * Legal contract analysis — contract review assistant policy for jingu-harness.
+ * Legal contract analysis — contract review assistant policy for jingu-trust-gate.
  *
  * Use case: a lawyer or business user asks "Does this contract have a termination
  * clause?" or "What are the penalty terms?". The RAG pipeline retrieves relevant
- * contract clauses as evidence. The LLM proposes structured claims. jingu-harness
+ * contract clauses as evidence. The LLM proposes structured claims. jingu-trust-gate
  * admits only claims that match actual clause text — preventing the LLM from
  * inventing clause names, inventing specific figures, or asserting the presence
  * of terms that do not appear in the retrieved text.

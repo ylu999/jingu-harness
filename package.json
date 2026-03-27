@@ -1,7 +1,7 @@
 {
-  "name": "jingu-harness",
+  "name": "jingu-trust-gate",
   "version": "0.1.0",
-  "description": "A deterministic trust boundary for LLM systems",
+  "description": "A deterministic trust gate for LLM systems",
   "type": "module",
   "main": "dist/src/index.js",
   "scripts": {
@@ -12,7 +12,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ylu999/jingu-harness.git"
+    "url": "git+https://github.com/ylu999/jingu-trust-gate.git"
   },
   "keywords": [
     "jingu",
@@ -23,9 +23,9 @@
   "author": "ylu999",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/ylu999/jingu-harness/issues"
+    "url": "https://github.com/ylu999/jingu-trust-gate/issues"
   },
-  "homepage": "https://github.com/ylu999/jingu-harness#readme",
+  "homepage": "https://github.com/ylu999/jingu-trust-gate#readme",
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "^6.0.2"

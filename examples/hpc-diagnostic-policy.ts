@@ -1,9 +1,9 @@
 /**
- * HPC GPU cluster — SRE incident investigation policy for jingu-harness.
+ * HPC GPU cluster — SRE incident investigation policy for jingu-trust-gate.
  *
  * Use case: an agent collects kernel logs, DCGM metrics, k8s events, and
  * PyTorch logs from a failed training job, packages them as a SupportRef pool,
- * then asks an LLM to propose structured DiagnosticClaims. jingu-harness
+ * then asks an LLM to propose structured DiagnosticClaims. jingu-trust-gate
  * admits only claims that stay within what the evidence actually supports.
  *
  * Domain types

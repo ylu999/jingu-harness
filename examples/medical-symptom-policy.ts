@@ -1,9 +1,9 @@
 /**
- * Medical symptom assessment — health assistant policy for jingu-harness.
+ * Medical symptom assessment — health assistant policy for jingu-trust-gate.
  *
  * Use case: a patient describes symptoms. A RAG pipeline retrieves matching
  * medical knowledge records. The LLM proposes structured claims about possible
- * conditions. jingu-harness admits only claims that stay within what the
+ * conditions. jingu-trust-gate admits only claims that stay within what the
  * symptom evidence actually supports — preventing over-certain diagnosis
  * assertions from reaching the user.
  *
