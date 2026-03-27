@@ -594,6 +594,13 @@ Every `proven` claim fails with `MISSING_EVIDENCE`. `derived` claims also fail. 
 
 ## Changelog
 
+### 0.1.14
+- `demo/aha-moment-demo.gif` — terminal demo GIF recorded with vhs (Menlo font, natural pacing, 25s)
+- README: demo GIF embedded in hero section; added clone instructions before demo commands
+
+### 0.1.13
+- ARCHITECTURE.md: updated examples table to current four-category structure (`answers/`, `actions/`, `state/`, `integration/`); removed four deleted files from the listing
+
 ### 0.1.12
 - `demo/aha-moment-demo.ts` — standalone two-scenario demo showing the two core failure modes end-to-end, with timed pacing. Run with `npm run demo:aha`.
 - `demo/demo.ts` — added Scenario 7 (Agent Action Gate: `INTENT_NOT_ESTABLISHED`, `CONFIRM_REQUIRED`) and Scenario 8 (Preventing Memory Corruption: `INFERRED_NOT_STATED`, state drift). Now 8 scenarios.
