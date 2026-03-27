@@ -19,3 +19,4 @@ Type "node dist/demo/aha-moment-demo.js"
 Sleep 500ms
 Enter
 Sleep 25s
+Sleep 5s
