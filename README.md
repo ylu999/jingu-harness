@@ -4,6 +4,17 @@
 
 It inserts a deterministic, auditable gate between LLM output and your trusted context. Only claims that are provably supported by evidence are allowed through. Everything else is rejected, downgraded, or annotated — and every decision is written to an audit log.
 
+## Install
+
+```bash
+# Node.js
+npm install jingu-trust-gate
+
+# Python
+pip install jingu-trust-gate
+```
+
+
 ## The problem
 
 LLMs do not distinguish between what is known and what is guessed. They generate confident answers either way.
