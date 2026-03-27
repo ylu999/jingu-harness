@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { createTrustGate } from "../src/trust-gate.js";
-import { ClaudeContextAdapter, OpenAIContextAdapter, GeminiContextAdapter } from "../examples/adapter-examples.js";
+import { ClaudeContextAdapter, OpenAIContextAdapter, GeminiContextAdapter } from "../examples/integration/adapter-examples.js";
 import { approve, reject, downgrade } from "../src/helpers/index.js";
 import type { GatePolicy } from "../src/types/policy.js";
 import type { Proposal } from "../src/types/proposal.js";
@@ -1118,6 +1118,344 @@ async function scenario6(): Promise<void> {
 }
 
 // ===========================================================================
+// Scenario 7: Agent Action Gate — Gate What the Agent Is Allowed to Do
+// ===========================================================================
+
+/**
+ * AgentActionPolicy — policy for gating agent action proposals.
+ *
+ * This is a different GatePolicy than MemoryPolicy: instead of claims about
+ * the world, the units are ACTIONS the agent wants to take.
+ *
+ * Gate rules:
+ *   R1  no "explicit_request" evidence                                 → INTENT_NOT_ESTABLISHED → reject
+ *   R2  riskLevel=high + isReversible=false + no "user_confirmation"   → CONFIRM_REQUIRED       → reject
+ *   R3  everything else                                                 → approve
+ *
+ * source_type values used here:
+ *   "explicit_request"  — something the user directly asked for
+ *   "user_confirmation" — explicit user yes/ok for a high-risk action
+ */
+type ActionProposal = {
+  id: string;
+  actionName: string;
+  description: string;
+  riskLevel: "low" | "medium" | "high";
+  isReversible: boolean;
+  evidenceRefs: string[];
+};
+
+type AuthEvidence = {
+  type: "explicit_request" | "user_confirmation" | "prior_context";
+  content: string;
+};
+
+class AgentActionPolicy implements GatePolicy<ActionProposal> {
+  validateStructure(proposal: Proposal<ActionProposal>): StructureValidationResult {
+    if (proposal.units.length === 0) {
+      return { kind: "structure", valid: false, errors: [{ field: "units", reasonCode: "EMPTY_UNITS" }] };
+    }
+    return { kind: "structure", valid: true, errors: [] };
+  }
+
+  bindSupport(unit: ActionProposal, pool: SupportRef[]): UnitWithSupport<ActionProposal> {
+    const matched = pool.filter(s => unit.evidenceRefs.includes(s.sourceId));
+    return { unit, supportIds: matched.map(s => s.id), supportRefs: matched };
+  }
+
+  evaluateUnit(
+    uws: UnitWithSupport<ActionProposal>,
+    _ctx: { proposalId: string; proposalKind: string }
+  ): UnitEvaluationResult {
+    const { unit, supportRefs } = uws;
+
+    // R1: every action needs an explicit user request
+    const hasRequest = supportRefs.some(s => (s.attributes as AuthEvidence)?.type === "explicit_request");
+    if (!hasRequest) {
+      return reject(unit.id, "INTENT_NOT_ESTABLISHED", {
+        note: `No explicit_request evidence for "${unit.actionName}" — agent cannot act without user authorization`,
+      });
+    }
+
+    // R2: high-risk irreversible actions need user_confirmation on top of the request
+    if (unit.riskLevel === "high" && !unit.isReversible) {
+      const hasConfirmation = supportRefs.some(s => (s.attributes as AuthEvidence)?.type === "user_confirmation");
+      if (!hasConfirmation) {
+        return reject(unit.id, "CONFIRM_REQUIRED", {
+          note: `riskLevel=high + isReversible=false requires user_confirmation (a request alone is not enough)`,
+        });
+      }
+    }
+
+    return approve(unit.id);
+  }
+
+  detectConflicts(_u: UnitWithSupport<ActionProposal>[], _p: SupportRef[]): ConflictAnnotation[] {
+    return [];
+  }
+
+  render(admittedUnits: AdmittedUnit<ActionProposal>[], _pool: SupportRef[], _ctx: RenderContext): VerifiedContext {
+    return {
+      admittedBlocks: admittedUnits.map(u => ({
+        sourceId: u.unitId,
+        content: `[${(u.unit as ActionProposal).riskLevel.toUpperCase()}] ${(u.unit as ActionProposal).actionName}: ${(u.unit as ActionProposal).description}`,
+        grade: (u.unit as ActionProposal).riskLevel,
+      })),
+      summary: { admitted: admittedUnits.length, rejected: 0, conflicts: 0 },
+      instructions:
+        "Execute only the verified actions below. " +
+        "Do not re-ask for confirmation — admitted actions are already authorized. " +
+        "Do not execute any action that was rejected.",
+    };
+  }
+
+  buildRetryFeedback(unitResults: UnitEvaluationResult[], ctx: RetryContext): RetryFeedback {
+    const failed = unitResults.filter(r => r.decision === "reject");
+    return {
+      summary: `${failed.length} action(s) rejected on attempt ${ctx.attempt}/${ctx.maxRetries}.`,
+      errors: failed.map(r => ({
+        unitId: r.unitId,
+        reasonCode: r.reasonCode,
+        details: {
+          hint: r.reasonCode === "INTENT_NOT_ESTABLISHED"
+            ? "Add an explicit_request SupportRef — the user must have asked for this action"
+            : "Add a user_confirmation SupportRef before proposing high-risk irreversible actions",
+        },
+      })),
+    };
+  }
+}
+
+async function scenario7(): Promise<void> {
+  sep("Scenario 7: Agent Action Gate — Gate What the Agent Is Allowed to Do");
+  console.log();
+  explain("This is the ACTIONS pattern: the gate is not checking claims about the world — it is checking whether the agent is AUTHORIZED to take specific actions. The LLM output is a list of proposed actions. Only authorized ones execute.");
+  console.log();
+  explain("Domain: household assistant. User says 'Please order more milk.' The agent proposes 3 actions: order_milk (low risk), delete_old_shopping_list (medium risk, reversible), send_notification_email (low risk). But only order_milk was actually requested.");
+  console.log();
+  explain("WHY THIS MATTERS FOR AGENTS: without a gate, the agent executes everything it proposes. With jingu-trust-gate, each action must be traced back to explicit user authorization before it can run. The agent cannot act beyond its mandate.");
+
+  subsep("INPUT — Authorization evidence pool");
+  console.log();
+  console.log("  User said: 'Please order more milk'");
+  console.log();
+  console.log("  Support pool:");
+  console.log('    req-001: type=explicit_request  content="Please order more milk"');
+  console.log('    (no user_confirmation — user never said yes to a high-risk action)');
+
+  const authPool: SupportRef[] = [
+    {
+      id: "ref-req-1",
+      sourceId: "req-001",
+      sourceType: "observation",
+      attributes: {
+        type: "explicit_request",
+        content: "Please order more milk — we are running low",
+      } satisfies AuthEvidence,
+    },
+  ];
+
+  subsep("INPUT — Agent's proposed actions");
+  console.log();
+  console.log('  action-1: order_milk          risk=low   reversible=true  evidenceRefs=["req-001"]');
+  console.log('  action-2: delete_old_list     risk=medium reversible=false evidenceRefs=[]');
+  console.log('             → no evidence — agent decided on its own');
+  console.log('  action-3: send_notification   risk=low   reversible=false evidenceRefs=["req-001"]');
+  console.log('             → user asked to order milk, not to send emails');
+
+  const proposal: Proposal<ActionProposal> = {
+    id: "prop-agent-001",
+    kind: "plan",
+    units: [
+      // action-1: user explicitly asked for this → APPROVE
+      {
+        id: "action-1",
+        actionName: "order_milk",
+        description: "Place online order for 2L whole milk via grocery app",
+        riskLevel: "low",
+        isReversible: true,
+        evidenceRefs: ["req-001"],
+      },
+      // action-2: agent decided on its own, no user request → REJECT (INTENT_NOT_ESTABLISHED)
+      {
+        id: "action-2",
+        actionName: "delete_old_shopping_list",
+        description: "Delete the shopping list from 2 weeks ago",
+        riskLevel: "medium",
+        isReversible: false,
+        evidenceRefs: [],
+      },
+      // action-3: req-001 is about ordering milk, not sending emails → REJECT (INTENT_NOT_ESTABLISHED)
+      {
+        id: "action-3",
+        actionName: "send_notification_email",
+        description: "Send email to household members that milk was ordered",
+        riskLevel: "low",
+        isReversible: false,
+        evidenceRefs: [],  // user never asked to send emails
+      },
+    ],
+  };
+
+  const gate = createTrustGate({
+    policy: new AgentActionPolicy(),
+    auditWriter: noopAuditWriter(),
+  });
+
+  subsep("GATE EXECUTION — gate.admit()");
+  console.log();
+  console.log("  Step 1 — validateStructure(): 3 units  → valid");
+  console.log("  Step 2 — bindSupport():");
+  console.log("            action-1 evidenceRefs=[req-001]  → matched ref-req-1");
+  console.log("            action-2 evidenceRefs=[]         → no support");
+  console.log("            action-3 evidenceRefs=[]         → no support");
+  console.log("  Step 3 — evaluateUnit():");
+  console.log("            action-1: has explicit_request  → approve");
+  console.log("            action-2: no explicit_request   → INTENT_NOT_ESTABLISHED → reject");
+  console.log("            action-3: no explicit_request   → INTENT_NOT_ESTABLISHED → reject");
+  console.log("  Step 4 — detectConflicts(): none");
+
+  const result = await gate.admit(proposal, authPool);
+  const context = gate.render(result);
+  const expl = gate.explain(result);
+
+  subsep("OUTPUT — Gate decision");
+  console.log();
+  console.log("  Admitted (authorized to execute):");
+  for (const u of result.admittedUnits) {
+    label(`    ${u.unitId} [${u.status}]`, (u.unit as ActionProposal).actionName);
+  }
+  console.log();
+  console.log("  Rejected (blocked):");
+  for (const u of result.rejectedUnits) {
+    const ann = u.evaluationResults[0]?.annotations as any;
+    label(`    ${u.unitId} [${u.evaluationResults[0]?.reasonCode}]`, (u.unit as ActionProposal).actionName);
+    if (ann?.note) label("      note", ann.note);
+  }
+  console.log();
+  label("  approved", expl.approved);
+  label("  rejected", expl.rejected);
+
+  console.log();
+  console.log("  VerifiedContext.instructions (sent to LLM before it executes):");
+  console.log(`    "${context.instructions}"`);
+  console.log();
+  console.log("  Admitted action blocks:");
+  for (const block of context.admittedBlocks) {
+    label(`    ${block.sourceId}`, block.content);
+  }
+
+  console.log();
+  explain("The agent receives VerifiedContext with 1 admitted action and the instructions. It executes order_milk. It does NOT execute delete_old_shopping_list or send_notification_email — those were never admitted through the gate.");
+  console.log();
+  explain("KEY POINT: the gate did not need to 'understand' the user request. It checked a deterministic rule: does this action have explicit_request evidence in its support pool? No evidence → no execution. This is why the gate is deterministic even in complex agentic flows.");
+
+  // ── Part B: High-risk action with confirmation ────────────────────────────
+
+  subsep("Part B — High-risk action: request alone is not enough");
+  console.log();
+  explain("User says 'Clear my entire order history.' Agent proposes delete_order_history (riskLevel=high, isReversible=false). The request is present — but R2 fires: high-risk irreversible actions need user_confirmation too.");
+  console.log();
+  console.log("  First attempt — only request present:");
+  console.log('    req-002: type=explicit_request  content="Clear my entire order history"');
+  console.log("    → R2: riskLevel=high + isReversible=false → CONFIRM_REQUIRED → reject");
+
+  const highRiskPool: SupportRef[] = [
+    {
+      id: "ref-req-2",
+      sourceId: "req-002",
+      sourceType: "observation",
+      attributes: {
+        type: "explicit_request",
+        content: "Clear my entire order history — I want a fresh start",
+      } satisfies AuthEvidence,
+    },
+  ];
+
+  const highRiskProposal: Proposal<ActionProposal> = {
+    id: "prop-agent-002",
+    kind: "plan",
+    units: [
+      {
+        id: "action-4",
+        actionName: "delete_order_history",
+        description: "Permanently delete all past orders",
+        riskLevel: "high",
+        isReversible: false,
+        evidenceRefs: ["req-002"],
+      },
+    ],
+  };
+
+  const highRiskGate = createTrustGate({
+    policy: new AgentActionPolicy(),
+    auditWriter: noopAuditWriter(),
+  });
+
+  const result2 = await highRiskGate.admit(highRiskProposal, highRiskPool);
+  const act4Rejected = result2.rejectedUnits.find(u => u.unitId === "action-4");
+  const ann = act4Rejected?.evaluationResults[0]?.annotations as any;
+
+  label("  action-4 decision", act4Rejected?.evaluationResults[0]?.reasonCode);
+  if (ann?.note) label("  note", ann.note);
+
+  console.log();
+  console.log("  Second attempt — user confirms:");
+  console.log('    confirm-001: type=user_confirmation  content="Yes, delete everything"');
+  console.log("    → R1: has explicit_request ✓   R2: has user_confirmation ✓ → approve");
+
+  const confirmedPool: SupportRef[] = [
+    ...highRiskPool,
+    {
+      id: "ref-confirm-1",
+      sourceId: "confirm-001",
+      sourceType: "observation",
+      attributes: {
+        type: "user_confirmation",
+        content: "Yes, go ahead — delete everything",
+      } satisfies AuthEvidence,
+    },
+  ];
+
+  const confirmedProposal: Proposal<ActionProposal> = {
+    id: "prop-agent-002-confirmed",
+    kind: "plan",
+    units: [
+      {
+        id: "action-4",
+        actionName: "delete_order_history",
+        description: "Permanently delete all past orders",
+        riskLevel: "high",
+        isReversible: false,
+        evidenceRefs: ["req-002", "confirm-001"],
+      },
+    ],
+  };
+
+  const result3 = await highRiskGate.admit(confirmedProposal, confirmedPool);
+  const act4Confirmed = result3.admittedUnits.find(u => u.unitId === "action-4");
+
+  label("  action-4 decision (with confirmation)", act4Confirmed?.status);
+
+  assert.equal(expl.approved, 1);
+  assert.equal(expl.rejected, 2);
+  assert.ok(result.admittedUnits.find(u => u.unitId === "action-1"));
+  assert.ok(result.rejectedUnits.find(u => u.unitId === "action-2"));
+  assert.ok(result.rejectedUnits.find(u => u.unitId === "action-3"));
+  assert.equal(result.rejectedUnits.find(u => u.unitId === "action-2")?.evaluationResults[0]?.reasonCode, "INTENT_NOT_ESTABLISHED");
+  assert.equal(act4Rejected?.evaluationResults[0]?.reasonCode, "CONFIRM_REQUIRED");
+  assert.equal(act4Confirmed?.status, "approved");
+
+  console.log();
+  pass("action-1 (order_milk) approved — user explicitly requested it");
+  pass("action-2 (delete_old_list) rejected — INTENT_NOT_ESTABLISHED (agent decided on its own)");
+  pass("action-3 (send_notification_email) rejected — INTENT_NOT_ESTABLISHED (no email request)");
+  pass("action-4 (delete_order_history) rejected first attempt — CONFIRM_REQUIRED");
+  pass("action-4 approved after user_confirmation added");
+  pass("VerifiedContext.instructions tells agent which actions to execute");
+}
+
+// ===========================================================================
 // Patterns and Anti-Patterns summary
 // ===========================================================================
 
@@ -1186,10 +1524,11 @@ async function main(): Promise<void> {
   await scenario4();
   await scenario5();
   await scenario6();
+  await scenario7();
 
   printPatternsAndAntiPatterns();
 
-  sep("ALL 6 SCENARIOS PASSED");
+  sep("ALL 7 SCENARIOS PASSED");
   console.log();
   console.log("  Scenarios:");
   console.log("    1. Happy Path               — zero friction, full pipeline printed");
@@ -1198,6 +1537,7 @@ async function main(): Promise<void> {
   console.log("    4. Conflict Detection       — informational: both surfaced with notes; blocking: both force-rejected, LLM gets empty context");
   console.log("    5. Semantic Retry Loop      — evidence-driven correction, typed feedback");
   console.log("    6. All Three Adapters       — same VerifiedContext, Claude + OpenAI + Gemini");
+  console.log("    7. Agent Action Gate        — gate what the agent is allowed to do");
   console.log();
   console.log("  Iron Laws verified:");
   console.log("    Law 1 — Gate Engine: zero LLM calls in all gate steps");
