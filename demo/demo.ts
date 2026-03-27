@@ -486,7 +486,7 @@ async function scenario2(): Promise<void> {
   console.log("            grade=proven, supportIds=[]");
   console.log("            Rule A fires: proven claim requires at least one evidence reference");
   console.log("            → decision: reject  reasonCode: MISSING_EVIDENCE");
-  console.log("  Step 4 — detectConflicts(): skipped (unit already rejected)");
+  console.log("  Step 4 — detectConflicts(): no injected conflicts → returns []");
 
   const result = await gate.admit(proposal, []);
 

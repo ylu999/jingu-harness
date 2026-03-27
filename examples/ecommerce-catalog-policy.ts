@@ -507,7 +507,7 @@ async function main(): Promise<void> {
         attributes: { assertedInStock: true },
       },
       // u2: OVER_SPECIFIC_STOCK → downgraded
-      // 42 is outside the range 10–50 ... actually inside, let's use 99 to show the failure
+      // 99 is outside the stock range 10–50 reported by the inventory record
       {
         id: "u2",
         claim: "There are 99 units available",

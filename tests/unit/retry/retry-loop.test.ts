@@ -78,18 +78,6 @@ function makeInvoker(
   };
 }
 
-// LLMInvoker that counts invocations
-function makeCountingInvoker(
-  units: TestUnit[]
-): { invoker: LLMInvoker<TestUnit>; count: number } {
-  const state = { count: 0 };
-  const invoker: LLMInvoker<TestUnit> = async (_prompt, _feedback) => {
-    state.count++;
-    return makeProposal(units);
-  };
-  return { invoker, count: 0 /* unused — read state.count via closure */ };
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
