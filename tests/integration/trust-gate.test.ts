@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createTrustGate, explainResult } from "../../src/trust-gate.js";
+import { createTrustGate } from "../../src/trust-gate.js";
 import type { GatePolicy } from "../../src/types/policy.js";
 import type { ConflictAnnotation } from "../../src/types/gate.js";
 import type { Proposal } from "../../src/types/proposal.js";

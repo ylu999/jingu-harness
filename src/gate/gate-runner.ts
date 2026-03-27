@@ -67,7 +67,9 @@ export class GateRunner<TUnit> {
     const unitSupportMap: Record<string, string[]> = {};
     const evaluationResults = proposal.units.map((unit) => {
       const bound = this.policy.bindSupport(unit, supportPool);
-      // Ensure supportRefs is populated even if policy only sets supportIds
+      // Runtime safety: populate supportRefs from the pool if the policy omitted it.
+      // UnitWithSupport requires supportRefs, but JS callers without type enforcement
+      // may return only supportIds. Reconstruct from the pool to satisfy downstream steps.
       if (!bound.supportRefs) {
         (bound as { supportRefs: SupportRef[] }).supportRefs =
           supportPool.filter((s) => bound.supportIds.includes(s.id));
