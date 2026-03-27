@@ -1,4 +1,4 @@
-// VerifiedContext is what harness produces — it is INPUT to Claude API,
+// VerifiedContext is what the trust gate produces — it is INPUT to Claude API,
 // NOT the final user-facing text. Claude generates the final text.
 // This maps to Claude API's search_result blocks or tool_result content.
 export type VerifiedBlock = {

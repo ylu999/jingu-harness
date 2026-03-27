@@ -549,7 +549,7 @@ async function main(): Promise<void> {
   // ── Scenario C: conflicting stock records ─────────────────────────────────
   //
   // Two seller listings for the same SKU disagree on stock status.
-  // harness admits both with approved_with_conflict so the LLM surfaces it.
+  // gate admits both with approved_with_conflict so the LLM surfaces it.
 
   sep("Scenario C — Conflicting stock records for the same SKU");
   subsep("Two seller listings disagree: one says in-stock, one says out-of-stock");

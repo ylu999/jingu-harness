@@ -23,7 +23,7 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
  * - LLMInvoker encapsulates ONE complete LLM interaction (may contain multiple tool_use turns).
  * - RetryFeedback is structured (not a string). The LLMInvoker implementer is responsible
  *   for serializing it as tool_result + is_error: true to leverage Claude's built-in retry.
- * - harness decides WHETHER to retry (gate semantic rejection).
+ * - the gate decides WHETHER to retry (gate semantic rejection).
  * - LLMInvoker decides HOW to pass feedback to the LLM.
  */
 export async function runWithRetry<TUnit>(
