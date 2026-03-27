@@ -459,6 +459,25 @@ Every `proven` claim fails with `MISSING_EVIDENCE`. `derived` claims also fail. 
 | Confusing observation with inference | "Log says X" (observation) ≠ "Root cause is Y" (inference). The claim grade and policy rules must reflect the inference step. |
 | gate as reasoner | The gate executes policy — it does not reason, interpret, or fill in gaps. If the policy cannot decide, it should downgrade or reject, not guess. |
 
+## Changelog
+
+### 0.1.7
+- Code quality audit across all source files: fixed stale comments, removed dead code, eliminated LLM-specific language from generic infrastructure
+- `AuditEntry.downgradeCount` renamed to `downgradedCount` for naming consistency; JSONL key updated to `"downgradedCount"` (aligns with Python SDK)
+- Removed unused imports and consolidated adapter imports in demo
+
+### 0.1.6
+- Adapter implementations (Claude, OpenAI, Gemini) moved from core to `examples/adapter-examples.ts`; only `ContextAdapter` interface remains in the public API
+- Removed unused dependencies (`@anthropic-ai/sdk`, `ajv`) — zero runtime dependencies
+- Fixed test glob pattern to correctly pick up all test files
+- README rewritten with full quick start, GatePolicy interface table, examples table
+
+### 0.1.5
+- Initial public release
+- Six example domain policies: medical, legal, HPC, e-commerce, BI analytics
+- Full retry loop with typed `RetryFeedback`
+- File audit writer (append-only JSONL)
+
 ## License
 
 MIT
