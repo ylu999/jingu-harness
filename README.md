@@ -1,6 +1,33 @@
 # jingu-harness
 
-LLMs make confident claims. Some are hallucinated. jingu-harness is a deterministic gate that only lets evidence-backed claims through to your LLM context — before your LLM generates a response.
+## The problem
+
+LLMs produce confident answers. Not all of them are grounded in your evidence.
+
+A typical RAG pipeline:
+```
+retrieve docs → LLM reads docs → LLM generates answer → user sees answer
+```
+
+The last step has no constraint. The LLM can assert things your documents never said. It can state a precise quantity with full confidence and zero backing. It can silently pick one of two contradictory sources as "true". None of this is caught.
+
+**Without harness:**
+```
+LLM: "You have exactly 3 apples"     ← grade=proven, evidenceRefs=[]
+→ passes through
+→ user believes it
+→ no audit trail, no way to debug
+```
+
+**With harness:**
+```
+LLM: "You have exactly 3 apples"     ← grade=proven, evidenceRefs=[]
+→ gate: MISSING_EVIDENCE → rejected
+→ never reaches user context
+→ audit log records the rejection
+```
+
+jingu-harness is a deterministic gate that sits between your LLM's proposed output and your trusted context. LLM proposes. harness decides what is allowed to be used.
 
 ## The mental model
 
