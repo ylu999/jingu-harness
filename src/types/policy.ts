@@ -28,7 +28,7 @@ export interface GatePolicy<TUnit> {
     supportPool: SupportRef[]
   ): ConflictAnnotation[];
 
-  // Step 5: render admitted units → VerifiedContext for Claude API input
+  // Step 5: render admitted units → VerifiedContext for LLM API input
   render(
     admittedUnits: AdmittedUnit<TUnit>[],
     supportPool: SupportRef[],

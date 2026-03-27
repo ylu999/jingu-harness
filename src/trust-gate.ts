@@ -18,7 +18,7 @@ export type TrustGateConfig<TUnit> = {
   policy: GatePolicy<TUnit>;
   auditWriter?: AuditWriter; // default: FileAuditWriter at .jingu-trust-gate/audit.jsonl
   retry?: RetryConfig;
-  // content extractor for BaseRenderer — how to turn TUnit into text for Claude
+  // content extractor for BaseRenderer — how to turn TUnit into text for the LLM
   extractContent?: (unit: TUnit, support: SupportRef[]) => string;
 };
 
@@ -45,8 +45,8 @@ export type TrustGate<TUnit> = {
   ): Promise<AdmissionResult<TUnit>>;
 
   /**
-   * Render admitted units → VerifiedContext (input for Claude API).
-   * NOT the final user-facing text — pass VerifiedContext to Claude for language generation.
+   * Render admitted units → VerifiedContext (input for LLM API).
+   * NOT the final user-facing text — pass VerifiedContext to the LLM for language generation.
    *
    * Pass the same support pool used in admit() so the renderer can access
    * SupportRef attributes (source URLs, confidence, etc.).

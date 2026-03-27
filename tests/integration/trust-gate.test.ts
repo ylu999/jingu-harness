@@ -386,7 +386,7 @@ describe("createTrustGate integration", () => {
   });
 
   // Test 12: render() returns VerifiedContext (object with admittedBlocks), not a string
-  it("Test 12: render() returns VerifiedContext (non-string, Claude API input)", async () => {
+  it("Test 12: render() returns VerifiedContext (non-string, LLM API input)", async () => {
     const gate = createTrustGate({
       policy: createMockPolicy({ unitDecision: "approve" }),
       auditWriter: makeNoopAuditWriter(),
@@ -405,7 +405,7 @@ describe("createTrustGate integration", () => {
     assert.ok(Array.isArray(ctx.admittedBlocks));
     assert.ok(typeof ctx.summary === "object");
     assert.ok(typeof ctx.summary.admitted === "number");
-    // Not a string — confirms it is Claude API input, not user-facing text
+    // Not a string — confirms it is LLM API input, not user-facing text
     assert.notEqual(typeof ctx, "string");
   });
 });

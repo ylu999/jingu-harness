@@ -9,8 +9,8 @@ import type { ConflictAnnotation } from "../types/gate.js";
 
 /**
  * BaseRenderer — default implementation of the render step.
- * Converts admitted units into VerifiedContext (input for Claude API).
- * Does NOT generate user-facing text — that is Claude's responsibility.
+ * Converts admitted units into VerifiedContext (input for LLM API).
+ * Does NOT generate user-facing text — that is the LLM's responsibility.
  */
 export class BaseRenderer {
   render<TUnit>(
