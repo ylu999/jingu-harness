@@ -38,6 +38,7 @@ import type { AdmittedUnit } from "../src/types/admission.js";
 import type { VerifiedContext, RenderContext } from "../src/types/renderer.js";
 import type { RetryFeedback, RetryContext } from "../src/types/retry.js";
 import type { AuditEntry, AuditWriter } from "../src/types/audit.js";
+import { approve, reject, downgrade, firstFailing } from "../src/helpers/index.js";
 
 // ── Domain types ──────────────────────────────────────────────────────────────
 
@@ -105,66 +106,58 @@ class AgentStepPolicy implements GatePolicy<AgentStepProposal> {
   }
 
   evaluateUnit(
-    { unit, supportIds, supportRefs }: UnitWithSupport<AgentStepProposal>,
+    uws: UnitWithSupport<AgentStepProposal>,
     _ctx: { proposalId: string; proposalKind: string }
   ): UnitEvaluationResult {
+    return firstFailing([
+      this.#checkContext(uws),
+      this.#checkFindings(uws),
+      this.#checkJustification(uws),
+    ]) ?? approve(uws.unit.id);
+  }
 
-    // R1: required step cites context IDs that are not in the pool.
-    // The agent cannot execute a step that depends on context it doesn't have yet.
+  // R1: required step cites context IDs that are not in the pool.
+  // The agent cannot execute a step that depends on context it doesn't have yet.
+  #checkContext({ unit, supportRefs }: UnitWithSupport<AgentStepProposal>) {
     if (unit.grade === "required" && unit.requiredContext.length > 0) {
       const availableSourceIds = new Set(supportRefs.map(s => s.sourceId));
       const missing = unit.requiredContext.filter(id => !availableSourceIds.has(id));
       if (missing.length > 0) {
-        return {
-          kind: "unit",
-          unitId: unit.id,
-          decision: "reject",
-          reasonCode: "MISSING_CONTEXT",
-          annotations: {
-            missingContextIds: missing,
-            note: `Step requires context [${missing.join(", ")}] which is not yet available`,
-          },
-        };
+        return reject(unit.id, "MISSING_CONTEXT", {
+          missingContextIds: missing,
+          note: `Step requires context [${missing.join(", ")}] which is not yet available`,
+        });
       }
     }
+    return undefined;
+  }
 
-    // R2: synthesize/write steps must be grounded in at least one "finding" type context.
-    // Synthesis without findings is speculation; the gate prevents premature conclusions.
+  // R2: synthesize/write steps must be grounded in at least one "finding" type context.
+  // Synthesis without findings is speculation; the gate prevents premature conclusions.
+  #checkFindings({ unit, supportRefs }: UnitWithSupport<AgentStepProposal>) {
     if (unit.stepType === "synthesize" || unit.stepType === "write") {
       const hasFindings = supportRefs.some(s => {
         const attrs = s.attributes as StepContextAttrs | undefined;
         return attrs?.type === "finding" && attrs.available;
       });
       if (!hasFindings) {
-        return {
-          kind: "unit",
-          unitId: unit.id,
-          decision: "reject",
-          reasonCode: "INSUFFICIENT_FINDINGS",
-          annotations: {
-            note: `${unit.stepType} step requires at least one available "finding" type context; none found`,
-          },
-        };
+        return reject(unit.id, "INSUFFICIENT_FINDINGS", {
+          note: `${unit.stepType} step requires at least one available "finding" type context; none found`,
+        });
       }
     }
+    return undefined;
+  }
 
-    // R3: justification too weak — downgrade from required to optional.
-    // A step with no real justification should not be treated as mandatory.
+  // R3: justification too weak — downgrade from required to optional.
+  // A step with no real justification should not be treated as mandatory.
+  #checkJustification({ unit }: UnitWithSupport<AgentStepProposal>) {
     if (!unit.justification || unit.justification.trim().length < 10) {
-      return {
-        kind: "unit",
-        unitId: unit.id,
-        decision: "downgrade",
-        reasonCode: "WEAK_JUSTIFICATION",
-        newGrade: "optional",
-        annotations: {
-          note: "Justification is absent or too short to treat step as required; downgraded to optional",
-        },
-      };
+      return downgrade(unit.id, "WEAK_JUSTIFICATION", "optional", {
+        note: "Justification is absent or too short to treat step as required; downgraded to optional",
+      });
     }
-
-    // R4: approved
-    return { kind: "unit", unitId: unit.id, decision: "approve", reasonCode: "OK" };
+    return undefined;
   }
 
   detectConflicts(

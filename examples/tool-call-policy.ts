@@ -37,6 +37,7 @@ import type { AdmittedUnit } from "../src/types/admission.js";
 import type { VerifiedContext, RenderContext } from "../src/types/renderer.js";
 import type { RetryFeedback, RetryContext } from "../src/types/retry.js";
 import type { AuditEntry, AuditWriter } from "../src/types/audit.js";
+import { approve, reject, downgrade, firstFailing } from "../src/helpers/index.js";
 
 // ── Domain types ──────────────────────────────────────────────────────────────
 
@@ -114,82 +115,71 @@ class ToolCallPolicy implements GatePolicy<ToolCallProposal> {
   }
 
   evaluateUnit(
-    { unit, supportIds, supportRefs }: UnitWithSupport<ToolCallProposal>,
+    uws: UnitWithSupport<ToolCallProposal>,
     _ctx: { proposalId: string; proposalKind: string }
   ): UnitEvaluationResult {
+    return firstFailing([
+      this.#checkJustification(uws),
+      this.#checkRedundant(uws),
+      this.#checkIntent(uws),
+      this.#checkExpectedValue(uws),
+    ]) ?? approve(uws.unit.id);
+  }
 
-    // R1: generic or missing justification — downgrade, don't reject.
-    // The call may still be valid; we just can't treat it as necessary.
+  // R1: generic or missing justification — downgrade, don't reject.
+  // The call may still be valid; we just can't treat it as necessary.
+  #checkJustification({ unit }: UnitWithSupport<ToolCallProposal>) {
     if (isGenericJustification(unit.justification)) {
-      return {
-        kind: "unit",
-        unitId: unit.id,
-        decision: "downgrade",
-        reasonCode: "WEAK_JUSTIFICATION",
-        newGrade: "optional",
-        annotations: {
-          note: `Justification "${unit.justification}" is absent or too generic to treat call as necessary`,
-        },
-      };
+      return downgrade(unit.id, "WEAK_JUSTIFICATION", "optional", {
+        note: `Justification "${unit.justification}" is absent or too generic to treat call as necessary`,
+      });
     }
+    return undefined;
+  }
 
-    // R2 (checked before intent): a prior_result for the same tool is already in the evidence pool.
-    // Redundancy is independent of intent — even an intentional call is redundant if the result exists.
+  // R2 (checked before intent): a prior_result for the same tool is already in the evidence pool.
+  // Redundancy is independent of intent — even an intentional call is redundant if the result exists.
+  #checkRedundant({ unit, supportRefs }: UnitWithSupport<ToolCallProposal>) {
     const duplicateResult = supportRefs.find(s => {
       const attrs = s.attributes as CallContextAttrs | undefined;
       return attrs?.type === "prior_result" && attrs.toolName === unit.toolName;
     });
     if (duplicateResult) {
       const attrs = duplicateResult.attributes as CallContextAttrs;
-      return {
-        kind: "unit",
-        unitId: unit.id,
-        decision: "reject",
-        reasonCode: "REDUNDANT_CALL",
-        annotations: {
-          existingResultId: duplicateResult.sourceId,
-          note: `A prior_result for "${unit.toolName}" already exists (${duplicateResult.sourceId}); call is redundant`,
-          existingContent: attrs.content,
-        },
-      };
+      return reject(unit.id, "REDUNDANT_CALL", {
+        existingResultId: duplicateResult.sourceId,
+        note: `A prior_result for "${unit.toolName}" already exists (${duplicateResult.sourceId}); call is redundant`,
+        existingContent: attrs.content,
+      });
     }
+    return undefined;
+  }
 
-    // R3: grade=necessary but no evidence that the user actually asked for this.
-    // There must be at least one user_message or conversation_turn that establishes intent.
+  // R3: grade=necessary but no evidence that the user actually asked for this.
+  // There must be at least one user_message or conversation_turn that establishes intent.
+  #checkIntent({ unit, supportRefs }: UnitWithSupport<ToolCallProposal>) {
     if (unit.grade === "necessary") {
       const hasUserIntent = supportRefs.some(s => {
         const attrs = s.attributes as CallContextAttrs | undefined;
         return attrs?.type === "user_message" || attrs?.type === "conversation_turn";
       });
       if (!hasUserIntent) {
-        return {
-          kind: "unit",
-          unitId: unit.id,
-          decision: "reject",
-          reasonCode: "INTENT_NOT_ESTABLISHED",
-          annotations: {
-            note: `grade=necessary but no user_message or conversation_turn in evidence establishes user intent`,
-          },
-        };
+        return reject(unit.id, "INTENT_NOT_ESTABLISHED", {
+          note: `grade=necessary but no user_message or conversation_turn in evidence establishes user intent`,
+        });
       }
     }
+    return undefined;
+  }
 
-    // R4: expectedValue not stated — downgrade (call can still run, but agent can't validate result).
+  // R4: expectedValue not stated — downgrade (call can still run, but agent can't validate result).
+  #checkExpectedValue({ unit }: UnitWithSupport<ToolCallProposal>) {
     if (!unit.expectedValue?.trim()) {
-      return {
-        kind: "unit",
-        unitId: unit.id,
-        decision: "downgrade",
-        reasonCode: "MISSING_EXPECTED_VALUE",
-        newGrade: "optional",
-        annotations: {
-          note: "expectedValue is empty; cannot validate tool result against expectation",
-        },
-      };
+      return downgrade(unit.id, "MISSING_EXPECTED_VALUE", "optional", {
+        note: "expectedValue is empty; cannot validate tool result against expectation",
+      });
     }
-
-    // R5: approved
-    return { kind: "unit", unitId: unit.id, decision: "approve", reasonCode: "OK" };
+    return undefined;
   }
 
   // No cross-call conflicts for tool calls

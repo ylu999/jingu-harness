@@ -40,6 +40,7 @@ import type { AdmittedUnit } from "../src/types/admission.js";
 import type { VerifiedContext, RenderContext } from "../src/types/renderer.js";
 import type { RetryFeedback, RetryContext } from "../src/types/retry.js";
 import type { AuditEntry, AuditWriter } from "../src/types/audit.js";
+import { approve, reject, firstFailing } from "../src/helpers/index.js";
 
 // ── Domain types ──────────────────────────────────────────────────────────────
 
@@ -112,91 +113,83 @@ class ActionGatePolicy implements GatePolicy<ActionProposal> {
   }
 
   evaluateUnit(
-    { unit, supportRefs }: UnitWithSupport<ActionProposal>,
+    uws: UnitWithSupport<ActionProposal>,
     _ctx: { proposalId: string; proposalKind: string }
   ): UnitEvaluationResult {
+    // R3 is checked first: a weak justification is always a hard reject, regardless of other evidence.
+    return firstFailing([
+      this.#checkJustification(uws),
+      this.#checkDestructive(uws),
+      this.#checkIntent(uws),
+      this.#checkConfirmation(uws),
+    ]) ?? approve(uws.unit.id);
+  }
 
-    // R3 first: weak justification is always a hard reject for actions.
-    // An action with < 20 chars justification cannot be trusted regardless of other evidence.
+  // R3: weak justification is always a hard reject for actions (checked before intent/confirmation).
+  // An action with < 20 chars justification cannot be trusted regardless of other evidence.
+  #checkJustification({ unit }: UnitWithSupport<ActionProposal>) {
     if (!unit.justification || unit.justification.trim().length < 20) {
-      return {
-        kind: "unit",
-        unitId: unit.id,
-        decision: "reject",
-        reasonCode: "WEAK_JUSTIFICATION",
-        annotations: {
-          justificationLength: unit.justification?.trim().length ?? 0,
-          note: "Actions require justification of at least 20 characters; this action was not approved",
-        },
-      };
+      return reject(unit.id, "WEAK_JUSTIFICATION", {
+        justificationLength: unit.justification?.trim().length ?? 0,
+        note: "Actions require justification of at least 20 characters; this action was not approved",
+      });
     }
+    return undefined;
+  }
 
-    // R4: destructive action names require an explicit_user_request that explicitly mentions
-    // deletion/removal — checked BEFORE the generic intent check (R1) so that the more specific
-    // error code DESTRUCTIVE_WITHOUT_AUTHORIZATION is surfaced instead of INTENT_NOT_ESTABLISHED.
+  // R4: destructive action names require an explicit_user_request that explicitly mentions
+  // deletion/removal — checked BEFORE the generic intent check (R1) so that the more specific
+  // error code DESTRUCTIVE_WITHOUT_AUTHORIZATION is surfaced instead of INTENT_NOT_ESTABLISHED.
+  #checkDestructive({ unit, supportRefs }: UnitWithSupport<ActionProposal>) {
     if (DESTRUCTIVE_PATTERNS.test(unit.actionName)) {
       const hasDeleteRequest = supportRefs.some(s => {
         const attrs = s.attributes as ActionContextAttrs | undefined;
         if (attrs?.type !== "explicit_user_request") return false;
         return DESTRUCTIVE_PATTERNS.test(attrs.content) ||
-               (attrs.actionScope && DESTRUCTIVE_PATTERNS.test(attrs.actionScope));
+               (attrs.actionScope != null && DESTRUCTIVE_PATTERNS.test(attrs.actionScope));
       });
       if (!hasDeleteRequest) {
-        return {
-          kind: "unit",
-          unitId: unit.id,
-          decision: "reject",
-          reasonCode: "DESTRUCTIVE_WITHOUT_AUTHORIZATION",
-          annotations: {
-            actionName: unit.actionName,
-            note: `"${unit.actionName}" is a destructive operation — explicit user request for deletion/removal is required`,
-          },
-        };
+        return reject(unit.id, "DESTRUCTIVE_WITHOUT_AUTHORIZATION", {
+          actionName: unit.actionName,
+          note: `"${unit.actionName}" is a destructive operation — explicit user request for deletion/removal is required`,
+        });
       }
     }
+    return undefined;
+  }
 
-    // R1: every action must have at least one explicit_user_request in evidence.
-    // Prior context alone is not sufficient authorization.
+  // R1: every action must have at least one explicit_user_request in evidence.
+  // Prior context alone is not sufficient authorization.
+  #checkIntent({ unit, supportRefs }: UnitWithSupport<ActionProposal>) {
     const hasExplicitRequest = supportRefs.some(s => {
       const attrs = s.attributes as ActionContextAttrs | undefined;
       return attrs?.type === "explicit_user_request";
     });
     if (!hasExplicitRequest) {
-      return {
-        kind: "unit",
-        unitId: unit.id,
-        decision: "reject",
-        reasonCode: "INTENT_NOT_ESTABLISHED",
-        annotations: {
-          note: "No explicit_user_request evidence found; actions require direct user authorization",
-        },
-      };
+      return reject(unit.id, "INTENT_NOT_ESTABLISHED", {
+        note: "No explicit_user_request evidence found; actions require direct user authorization",
+      });
     }
+    return undefined;
+  }
 
-    // R2: high-risk irreversible actions require user confirmation (not just a request).
-    // riskLevel=high + isReversible=false → must have user_confirmation.
+  // R2: high-risk irreversible actions require user confirmation (not just a request).
+  // riskLevel=high + isReversible=false → must have user_confirmation.
+  #checkConfirmation({ unit, supportRefs }: UnitWithSupport<ActionProposal>) {
     if (unit.riskLevel === "high" && !unit.isReversible) {
       const hasConfirmation = supportRefs.some(s => {
         const attrs = s.attributes as ActionContextAttrs | undefined;
         return attrs?.type === "user_confirmation";
       });
       if (!hasConfirmation) {
-        return {
-          kind: "unit",
-          unitId: unit.id,
-          decision: "reject",
-          reasonCode: "CONFIRM_REQUIRED",
-          annotations: {
-            riskLevel: unit.riskLevel,
-            isReversible: unit.isReversible,
-            note: `riskLevel=${unit.riskLevel} + isReversible=false requires user_confirmation evidence (a request alone is not sufficient)`,
-          },
-        };
+        return reject(unit.id, "CONFIRM_REQUIRED", {
+          riskLevel: unit.riskLevel,
+          isReversible: unit.isReversible,
+          note: `riskLevel=${unit.riskLevel} + isReversible=false requires user_confirmation evidence (a request alone is not sufficient)`,
+        });
       }
     }
-
-    // R5: approved
-    return { kind: "unit", unitId: unit.id, decision: "approve", reasonCode: "OK" };
+    return undefined;
   }
 
   detectConflicts(
