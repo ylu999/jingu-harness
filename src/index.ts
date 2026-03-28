@@ -56,3 +56,14 @@ export {
 // Adapter interface — convert VerifiedContext to LLM API wire format
 // Concrete implementations (Claude, OpenAI, Gemini) live in examples/adapter-examples.ts
 export type { ContextAdapter } from "./adapters/context-adapter.js";
+
+// Regime Adapter — type bridge from policy-core regime evaluation to trust-gate audit log
+export type {
+  RegimeDecision,
+  RegimeViolation,
+  RegimeEvaluation,
+} from "./regime-adapter/index.js";
+export {
+  regimeToUnitResult,
+  regimeToGateLog,
+} from "./regime-adapter/index.js";
