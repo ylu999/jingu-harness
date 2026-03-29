@@ -10,6 +10,25 @@ import {
   partitionUnits,
 } from "./gate-utils.js";
 import { buildAuditEntry } from "../audit/audit-entry.js";
+import type { RPPRecord } from "@jingu/policy-core";
+import { runRPPGate } from "../rpp/rpp-gate.js";
+
+/**
+ * Extract an RPPRecord from an unknown input object.
+ * Checks top-level `rpp_record` field first, then `metadata.rpp_record`.
+ * Returns null if neither is present.
+ */
+export function extractRPPRecord(input: unknown): RPPRecord | null {
+  if (input == null || typeof input !== "object") return null;
+  const obj = input as Record<string, unknown>;
+  if (obj["rpp_record"] != null) return obj["rpp_record"] as RPPRecord;
+  const metadata = obj["metadata"];
+  if (metadata != null && typeof metadata === "object") {
+    const meta = metadata as Record<string, unknown>;
+    if (meta["rpp_record"] != null) return meta["rpp_record"] as RPPRecord;
+  }
+  return null;
+}
 
 export class GateRunner<TUnit> {
   constructor(
@@ -137,6 +156,37 @@ export class GateRunner<TUnit> {
       unitSupportMap,
     });
     await this.auditWriter?.append(auditEntry);
+
+    // Step 6: RPP gate — additive AND condition
+    // Only applied when an rpp_record is present in the proposal (or its metadata).
+    // If present and invalid, all currently admitted units are force-rejected.
+    // If absent, this step is skipped (pass-through) — RPP is opt-in per proposal.
+    const rppRecord = extractRPPRecord(proposal);
+    const rppResult = rppRecord != null ? runRPPGate(rppRecord) : null;
+    if (rppResult != null && !rppResult.allow) {
+      const rppReasonCode = rppResult.failures[0]?.code ?? "RPP_BLOCKED";
+      const rppRejected = admitted.map((admittedUnit) => ({
+        ...admittedUnit,
+        status: "rejected" as const,
+        evaluationResults: [
+          ...admittedUnit.evaluationResults,
+          {
+            kind: "unit" as const,
+            unitId: admittedUnit.unitId,
+            decision: "reject" as const,
+            reasonCode: rppReasonCode,
+          },
+        ],
+      }));
+      return {
+        proposalId: proposal.id,
+        admittedUnits: [],
+        rejectedUnits: [...rejected, ...rppRejected],
+        hasConflicts: conflictAnnotations.length > 0,
+        auditId,
+        retryAttempts: 1,
+      };
+    }
 
     return {
       proposalId: proposal.id,
